@@ -1,12 +1,16 @@
 # RANVDS
 
-A packaged Linux application (onefile via Nuitka) for analyzing cellular traffic and related data using tshark and a config-driven field extraction approach. The app ships as a single binary and relies on a few system-level dependencies for capture and UI.
+A packaged Linux application (onefile via Nuitka) for evaluating security configurations of cellular networks using tshark and a config-driven field extraction approach. The app ships as a single binary and relies on a few system-level dependencies for capture and UI.
 
 - Self-contained binary: `dist/nuitka/ranvds`
 - Uses system tools/libraries: `tshark`, USB tools, SDL2/OpenGL (for GUI)
-- Configuration-driven (2G/3G/4G/5G fields): see `Config/`
+- Configuration-driven (2G/3G/4G/5G wireshark dissector fields): see `Config/`
 
 For detailed runtime setup, see: [RUNTIME_REQUIREMENTS.md](./RUNTIME_REQUIREMENTS.md)
+
+This app was developed in the context of a Masters Thesis and only has reasearch goals.
+
+The app uses SCAT (https://github.com/fgsect/scat) to capture the traffic, and therefore has the same dependencies and limitations regarding the devices supported. However, this version also supports RRC and NAS messages for 5G in Samsung e5123 chipset devices. Support for other chipsets is not guaranteed and need to be tested for each case.
 
 ## Repository layout
 
