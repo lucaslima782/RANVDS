@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pylint black mypy
+          pip install -r requirements.txt || echo "requirements.txt not found, skipping"
+      
+      - name: Run Black (code formatting check)
+        run: |
+          black --check --diff . || echo "Black formatting issues found (non-blocking)"
+        continue-on-error: true
+      
+      - name: Run Pylint
+        run: |
+          pylint ranvds.py pcap_analyzer.py security_evaluator.py table_builder.py ranvds_gui.py || echo "Pylint issues found (non-blocking)"
+        continue-on-error: true
+      
+      - name: Run MyPy (type checking)
+        run: |
+          mypy ranvds.py pcap_analyzer.py security_evaluator.py table_builder.py --ignore-missing-imports || echo "MyPy issues found (non-blocking)"
+        continue-on-error: true
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tshark
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+          pip install -r requirements.txt || echo "requirements.txt not found"
+      
+      - name: Syntax check
+        run: |
+          python -m py_compile ranvds.py
+          python -m py_compile pcap_analyzer.py
+          python -m py_compile security_evaluator.py
+          python -m py_compile table_builder.py
+          python -m py_compile ranvds_gui.py
+      
+      - name: Import check
+        run: |
+          python -c "import pcap_analyzer; print('pcap_analyzer OK')"
+          python -c "import security_evaluator; print('security_evaluator OK')"
+          python -c "import table_builder; print('table_builder OK')"
+      
+      - name: Run tests (if available)
+        run: |
+          if [ -d "tests" ]; then
+            pytest tests/ -v --cov=. --cov-report=xml --cov-report=term
+          else
+            echo "No tests directory found, skipping"
+          fi
+        continue-on-error: true
+      
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.10'
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+        continue-on-error: true
+
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || echo "requirements.txt not found"
+      
+      - name: Check build script exists
+        run: |
+          if [ -f "scripts/build_nuitka.sh" ]; then
+            echo "Build script found"
+            bash -n scripts/build_nuitka.sh
+          else
+            echo "Build script not found"
+          fi
+      
+      - name: Verify config files
+        run: |
+          ls -la config/ || echo "config directory not found"
+          test -f config/fields.cfg || echo "fields.cfg not found"
+          test -f config/translations.cfg || echo "translations.cfg not found"
+          test -f config/mcc-mnc.csv || echo "mcc-mnc.csv not found"

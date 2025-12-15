@@ -1,6 +1,6 @@
 # RANVDS Runtime Requirements (for the Nuitka onefile binary)
 
-This document lists the OS-level packages and setup needed to run the packaged binary `dist/nuitka/ranvds` on a fresh Linux install. Python and pip packages are NOT required to run the binary.
+This document lists the OS-level packages and setup needed to run the packaged binary `dist/nuitka/ranvds` on a fresh Linux install. Python and pip packages are NOT required to run the binary. For source runs, use `requirements.txt` instead.
 
 ## Summary
 - The binary bundles Python and all pure-Python libs.
@@ -35,38 +35,18 @@ sudo dnf install -y \
 Notes:
 - Some Fedora variants use `libusb1` instead of `libusbx`.
 
-## Install via script (recommended)
-Use the provided installer to set up the binary, data, and configuration paths:
+## Install configuration files
+The app looks for its configuration at fixed paths under `/usr/local/etc/ranvds/`.
+Install them once on the target machine:
 ```bash
-# from the repository root
-sudo scripts/install_system.sh [--shared] [--bin dist/nuitka/ranvds] [--config Config]
+sudo install -d /usr/local/etc/ranvds
+sudo install -m 0644 fields.cfg translations.cfg mcc-mnc.csv /usr/local/etc/ranvds/
 ```
-Options:
-- `--bin`: path to the packaged binary (default: `dist/nuitka/ranvds`).
-- `--config` or `--cfg`: path to the config folder containing `fields.cfg`, `translations.cfg`, and `mcc-mnc.csv` (default: `Config`).
-- `--shared`: create a `ranvds` group and configure shared-writable directories (`2775`). Add users with `sudo usermod -aG ranvds <username>`.
+Files are sought by:
+- `ranvds.py`: `/usr/local/etc/ranvds/translations.cfg` and `/usr/local/etc/ranvds/fields.cfg`
+- `ranvds.py` MCC/MNC lookup: `/usr/local/etc/ranvds/mcc-mnc.csv`
 
-Example:
-```bash
-sudo scripts/install_system.sh --bin dist/nuitka/ranvds --config Config --shared
-```
-After install:
-- Binary: `/usr/local/bin/ranvds`
-- Data dirs: `/usr/local/share/ranvds/PCAPs`, `/usr/local/share/ranvds/Resultados`
-- Config dir: `/usr/local/etc/ranvds/` (`fields.cfg`, `translations.cfg`, `mcc-mnc.csv`)
-
-## Manual install (alternative)
-Only if you prefer not to use the script:
-```bash
-# Install binary
-sudo install -Dm755 dist/nuitka/ranvds /usr/local/bin/ranvds
-
-# Create data and config directories
-sudo install -d /usr/local/share/ranvds/PCAPs /usr/local/share/ranvds/Resultados /usr/local/etc/ranvds
-
-# Install configuration files
-sudo install -m 0644 Config/fields.cfg Config/translations.cfg Config/mcc-mnc.csv /usr/local/etc/ranvds/
-```
+Note: The build bundles these files inside the binary too, but the current code first searches the absolute paths above. Installing them system-wide guarantees runtime discovery.
 
 ## Permissions and groups
 - Serial (if used): add your user to the `dialout` group.
@@ -89,10 +69,6 @@ sudo udevadm trigger
 sudo dpkg-reconfigure wireshark-common   # allow non-root capture
 sudo usermod -aG wireshark $USER
 ```
-- Shared data/config (optional): if you installed with `--shared`, add users to the `ranvds` group and re-login.
-```bash
-sudo usermod -aG ranvds $USER
-```
 Log out and back in for group changes to take effect.
 
 ## Environment notes
@@ -101,34 +77,20 @@ Log out and back in for group changes to take effect.
 
 ## Validation checklist
 ```bash
-# Verify graphics libs are present (if Kivy/SDL2 GUI)
-ldd /usr/local/bin/ranvds | grep -E "SDL2|GL|GLEW" || true
+# Verify graphics libs are present
+ldd ./ranvds | grep -E "SDL2|GL|GLEW"
 
 # Verify external tools
 which tshark && tshark -v
 which lsusb && lsusb
 
-# Verify config files and directories
+# Verify config files
 ls -l /usr/local/etc/ranvds/
-ls -ld /usr/local/share/ranvds /usr/local/share/ranvds/PCAPs /usr/local/share/ranvds/Resultados
-
-# Launch (should open the application)
-ranvds
 ```
 
-## Uninstall
-Use the provided uninstall script:
+## Source-run (not required for the binary)
+If you run from source instead of the binary, install Python deps from `requirements.txt`:
 ```bash
-sudo scripts/uninstall_system.sh            # keeps data and config
-sudo scripts/uninstall_system.sh --purge    # also removes /usr/local/share/ranvds and /usr/local/etc/ranvds
+pip install -r requirements.txt
 ```
-If you installed with `--shared`, you may also want to remove the `ranvds` group:
-```bash
-sudo groupdel ranvds || true
-```
-Manual fallback (not recommended):
-```bash
-sudo rm -f /usr/local/bin/ranvds
-sudo rm -rf /usr/local/share/ranvds
-sudo rm -rf /usr/local/etc/ranvds
-```
+Optional performance dependency for CRC: `libscrc`.

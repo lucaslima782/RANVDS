@@ -34,6 +34,10 @@ if [[ "$PURGE" == "--purge" ]]; then
   else
     echo "/usr/local/etc/ranvds not found"
   fi
+  if [[ -f /usr/local/share/applications/ranvds.desktop ]]; then
+    rm -f /usr/local/share/applications/ranvds.desktop
+    echo "Removed desktop entry /usr/local/share/applications/ranvds.desktop"
+  fi
 else
   echo "Kept data directory /usr/local/share/ranvds and configuration directory /usr/local/etc/ranvds (use --purge to remove)"
 fi

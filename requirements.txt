@@ -1,0 +1,18 @@
+# RANVDS - RAN Vulnerability Detection System
+# Python Dependencies for Source Installation
+
+# Core Dependencies
+# ODS (OpenDocument Spreadsheet) file handling
+odfpy>=1.4.1
+scipy>=1.10,<2.0
+
+# GUI Framework
+kivy>=2.1.0
+kivy-garden>=0.1.5
+
+# Optional Performance Enhancement
+# Faster CRC calculations for SCAT modem parsing
+libscrc>=1.8
+
+# Note: System dependencies (tshark, SDL2, OpenGL) must be installed separately
+# See RUNTIME_REQUIREMENTS.md for system package installation instructions
