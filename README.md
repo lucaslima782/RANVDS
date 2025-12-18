@@ -417,6 +417,8 @@ If you use RANVDS in your research, please cite:
 - **Wireshark/tshark** - Protocol dissection engine (https://www.wireshark.org/)
 - **Kivy** - Cross-platform GUI framework (https://kivy.org/)
 - **odfpy** - ODS file generation (https://github.com/odfpy/odfpy)
+- **Nuitka** - Python to C++ compiler (https://nuitka.net/)
+- **Scipy** - Scientific computing library (https://www.scipy.org/)
 
 ---
 
