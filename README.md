@@ -400,9 +400,9 @@ If you use RANVDS in your research, please cite:
 
 ```bibtex
 @mastersthesis{lima2025ranvds,
-  author = {Lucas Lima},
-  title = {RANVDS: RAN Vulnerability Detection System},
-  school = {[Your University Name]},
+  author = {Lucas Lima da Rocha},
+  title = {RANVDS: Uma Ferramenta para Detecção de Configurações Inseguras em Redes de Acesso à Telefonia Móvel},
+  school = {Instituto Militar de Engenharia},
   year = {2025},
   type = {Master's Thesis},
   url = {https://github.com/lucaslima782/RANVDS}
