@@ -4,7 +4,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**RANVDS** (RAN Vulnerability Detection System) is a security analysis tool for cellular networks that identifies cryptographic weaknesses, identity exposure, paging leaks, VoPS support issues, SUCI-related privacy indicators, and capability-message ordering risks across 2G, 3G, 4G, and 5G mobile networks.
+**RANVDS** (RAN Vulnerability Detection System) is a security analysis tool for cellular networks that identifies cryptographic weaknesses, identity exposure, paging leaks, VoPS support issues, SUCI-related privacy indicators, capability-message ordering risks, and SIP/IMS IPSec protection gaps across 2G, 3G, 4G, and 5G mobile networks.
 
 > 🎓 **Academic Research Project**  
 > This tool was developed as part of a Master's thesis research project. RANVDS helps researchers, operators, and subscribers inspect the security posture of operational cellular networks through automated PCAP analysis, modem-dump parsing, and live capture workflows.
@@ -37,6 +37,15 @@
   - 4G: IMSI, GUTI, M-TMSI (RRC and NAS layers)
   - 5G: 5G-GUTI, SUCI and related NAS/RRC identifiers
 - **Paging Analysis** - Monitors paging messages for IMSI or temporary-ID exposure across 2G to 5G
+
+### 📞 SIP / IMS (VoLTE / VoNR) Analysis
+- **SIP Packet Extraction** - Captures every SIP request and response visible in the PCAP, enriched with:
+  - SIP Method (REGISTER, INVITE, BYE, …)
+  - Status Code (e.g. `401 Unauthorized`)
+  - Security Mechanism negotiated via Security-Negotiate header (`ipsec-3gpp`, …)
+  - Encryption Algorithm (`ealg`) advertised in the `Security-Verify` header
+- **IPSec EAlg Security Evaluation** - For each `401 Unauthorized` challenge, checks whether a valid IPSec encryption algorithm was negotiated; counts pass / fail cases and produces a **SIP IPSec Stats** sheet in the Security ODS
+- **Dedicated SIP Sheet** - Network Analysis ODS includes a `SIP` tab listing all captured SIP messages
 
 ### 📞 VoPS (Voice over Packet Switched) Analysis
 - **4G IMS VoPS** - Extracts the LTE NAS Attach Accept IMS VoPS indicator
@@ -229,9 +238,10 @@ usage: ranvds.py [-h] (-p PCAP | -l [LIVE] | -d DUMP [DUMP ...] | -s SECURITY)
 
 RANVDS v2.0.0 — RAN Vulnerability Detection System. Analyzes cellular traffic
 (2G–5G) for security vulnerabilities: weak cipher detection, TMSI/GUTI
-randomness, IMSI exposure, paging leaks, IMS VoPS support (4G/5G), and 5G SUCI
-analysis. Four modes: PCAP analysis (generates multi-tab ODS), live capture
-(SCAT→PCAP), modem dump (SCAT→PCAP), or security evaluation (ODS→Security ODS)
+randomness, IMSI exposure, paging leaks, IMS VoPS support (4G/5G), 5G SUCI
+analysis, and SIP/IMS IPSec EAlg evaluation (VoLTE/VoNR). Four modes: PCAP
+analysis (generates multi-tab ODS), live capture (SCAT→PCAP), modem dump
+(SCAT→PCAP), or security evaluation (ODS→Security ODS)
 
 options:
   -h, --help            show this help message and exit
@@ -284,7 +294,7 @@ All profile keys default to `true`.
 - **3G**: `enc_3g`, `int_3g`, `id_3g_rrc`, `id_3g_nas`, `paging_3g`
 - **4G**: `enc_4g_rrc`, `int_4g_rrc`, `enc_4g_nas`, `int_4g_nas`, `id_4g_rrc`, `id_4g_nas`, `paging_4g`, `vops_4g`, `ue_cap_security_4g`
 - **5G**: `enc_5g_rrc`, `int_5g_rrc`, `enc_5g_nas`, `int_5g_nas`, `id_5g_rrc`, `id_5g_nas`, `paging_5g`, `suci_5g`, `vops_5g`, `ue_cap_security_5g`
-- **General**: `ue_capability`
+- **General**: `ue_capability`, `sip_ipsec`
 
 ### Output Format
 
@@ -301,6 +311,7 @@ Depending on the enabled modules and the available data, RANVDS can create the f
 - **5G SUCI**
 - **4G VoPS**, **5G VoPS**
 - **4G UE Cap Security**, **5G UE Cap Security**
+- **SIP ENC**
 
 Disabled or empty modules do not generate sheets.
 
@@ -313,6 +324,7 @@ The Security report can include:
 - **Paging Summary**
 - **5G SUCI Stats**
 - **VoPS Stats**
+- **SIP IPSec Stats**
 - **UE Cap Security Stats**
 - **Summary**
 
@@ -459,13 +471,26 @@ If you use RANVDS in your research, please cite:
 ```
 or
 ```bibtex
-@mastersthesis{lima2025ranvds,
+@mastersthesis{lima2025thesisranvds,
   author = {Lucas Lima da Rocha},
   title = {RANVDS: Uma Ferramenta para Detecção de Configurações Inseguras em Redes de Acesso à Telefonia Móvel},
   school = {Instituto Militar de Engenharia},
   year = {2025},
   type = {Master's Thesis},
   url = {https://github.com/lucaslima782/RANVDS}
+}
+```
+
+```bibtex
+@article{lima2026ojcomsranvds,
+  author={da Rocha, Lucas L. and Carneiro, Vitor G. A. and Pinto, Ernesto L.},
+  journal={IEEE Open Journal of the Communications Society}, 
+  title={RANVDS: Client-Side Detection of Insecure RAN Configurations in Operational 2G–5G Networks}, 
+  year={2026},
+  volume={7},
+  number={},
+  pages={1-24},
+  doi={10.1109/OJCOMS.2026.3673071}
 }
 ```
 
