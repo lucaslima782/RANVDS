@@ -321,6 +321,68 @@ def interpret_id_type(id_type: Optional[str], id_type_field: str, translations_c
         return inverted.get(parts[0], "NOT FOUND") + ", " + inverted.get(parts[1], "NOT FOUND")
     return inverted.get(id_type, "NOT FOUND")
 
+def interpret_vops(raw: Optional[str]) -> str:
+    """Translate raw tshark boolean VoPS value to 'Supported' or 'Not Supported'."""
+    if not raw:
+        return ""
+    return "Supported" if raw.strip().lower() in ("true", "1") else "Not Supported"
+
+
+def interpret_scheme_type(scheme: Optional[str], scheme_field: str, translations_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """Translate the SUCI Scheme ID raw value to a descriptive string."""
+    if not scheme:
+        return ""
+    if translations_cfg is None:
+        return "NOT FOUND"
+    scheme_dict = translations_cfg.get(scheme_field, {})
+    inverted = {v: k for k, v in scheme_dict.items()}
+    result = inverted.get(scheme)
+    if result is None:
+        try:
+            result = inverted.get(hex(int(scheme, 0)))
+        except (ValueError, TypeError):
+            pass
+    return result if result is not None else "NOT FOUND"
+
+def interpret_sip_status(raw: Optional[str], field: str, translations_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """Translate a raw SIP status code number to its descriptive label."""
+    if not raw:
+        return ""
+    if translations_cfg is None:
+        return raw
+    status_dict = translations_cfg.get(field, {})
+    inverted = {v: k for k, v in status_dict.items()}
+    if ',' in raw:
+        raw = raw.split(',')[0].strip()
+    return inverted.get(raw, raw)
+
+
+def interpret_sip_sec_mechanism(raw: Optional[str], field: str, translations_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """Translate a raw SIP sec_mechanism identifier to a descriptive label."""
+    if not raw:
+        return ""
+    if translations_cfg is None:
+        return raw
+    mech_dict = translations_cfg.get(field, {})
+    inverted = {v: k for k, v in mech_dict.items()}
+    if ',' in raw:
+        raw = raw.split(',')[0].strip()
+    return inverted.get(raw, raw)
+
+
+def interpret_sip_ealg(raw: Optional[str], field: str, translations_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """Translate a raw SIP sec_mechanism.ealg value to a descriptive label."""
+    if not raw:
+        return ""
+    if translations_cfg is None:
+        return raw
+    ealg_dict = translations_cfg.get(field, {})
+    inverted = {v: k for k, v in ealg_dict.items()}
+    if ',' in raw:
+        raw = raw.split(',')[0].strip()
+    return inverted.get(raw, raw)
+
+
 def format_id_hex(id_value: str) -> str:
     """Normalize IDs already in HEX to the form "0x" + lowercase digits.
 
@@ -361,6 +423,8 @@ def get_first_version(resultados: Dict[str, List[Dict[str, str]]]) -> Optional[s
 
 def add_sheet(doc: OpenDocumentSpreadsheet, title: str, data: Dict[str, List[Dict[str, str]]], cols: List[str], translations_cfg: Dict[str, Any]) -> None:
     """Add a sheet to the ODS document and populate it using interpreted fields."""
+    if not data:
+        return
     table = Table(name=title)
     doc.spreadsheet.addElement(table)
     # Header
@@ -398,6 +462,20 @@ def add_sheet(doc: OpenDocumentSpreadsheet, title: str, data: Dict[str, List[Dic
                     text = format_id_hex(e.get(c, ""))
                 elif c in ("ID Type", "ID Type 1", "ID Type 2", "ID Type 3", "ID Type 4", "ID Type 5"):
                     text = interpret_id_type(e.get(c, ""), e.get("ID Type Field", ""), translations_cfg)
+                elif c == "Scheme Type":
+                    text = interpret_scheme_type(e.get(c, ""), e.get("Scheme Type Field", ""), translations_cfg)
+                elif c == "VoPS":
+                    text = interpret_vops(e.get(c, ""))
+                elif c == "Status Code":
+                    text = interpret_sip_status(e.get("StatusCode", ""), e.get("StatusCodeField", ""), translations_cfg)
+                elif c == "Security Mechanism":
+                    text = interpret_sip_sec_mechanism(e.get("SecMechanism", ""), e.get("SecMechanismField", ""), translations_cfg)
+                elif c == "EAlg":
+                    text = interpret_sip_ealg(e.get("EAlg", ""), e.get("EAlgField", ""), translations_cfg)
+                elif c == "Method":
+                    text = e.get("Method", "")
+                elif c == "Realm":
+                    text = e.get("Realm", "")
                 else:
                     text = e.get(c, "")
                 cell = TableCell()
@@ -434,10 +512,17 @@ def build_ods_table(
     resultados_3g_paging: Dict[str, List[Dict[str, str]]],
     resultados_4g_paging: Dict[str, List[Dict[str, str]]],
     resultados_5g_paging: Dict[str, List[Dict[str, str]]],
-    country: str,
-    operator: str,
-    translations_cfg: Dict[str, Any],
-    out_fn: str,
+    resultados_5g_sucischema: Dict[str, List[Dict[str, str]]],
+    resultados_4g_vops: Dict[str, List[Dict[str, str]]],
+    resultados_5g_vops: Dict[str, List[Dict[str, str]]],
+    resultados_4g_ue_cap_security: Optional[List[Dict[str, Any]]] = None,
+    resultados_5g_ue_cap_security: Optional[List[Dict[str, Any]]] = None,
+    resultados_sip: Optional[Dict[str, List[Dict[str, str]]]] = None,
+    country: str = "",
+    operator: str = "",
+    translations_cfg: Dict[str, Any] = None,
+    out_fn: str = "",
+    include_ue_capability: bool = True,
 ) -> None:
     """
     Generate an ODS spreadsheet with the results of supported and used algorithms.
@@ -453,75 +538,55 @@ def build_ods_table(
     """
     # Create document and table
     doc = OpenDocumentSpreadsheet()
-    
+
     # Summary tab: creates a table to display a general summary of the results
-    summary = Table(name="UE Capability")
-    doc.spreadsheet.addElement(summary)
-    
-    # Header of the summary table
-    hdr = TableRow()
-    headers = ["Country","Operator","", "Algorithm","Capability","","Algorithm","Chosen"]
-    for h in headers:
-        cell = TableCell()
-        cell.addElement(P(text=h))
-        hdr.addElement(cell)
-    summary.addElement(hdr)
-    
-    # Calculate the total number of rows needed for the summary table
-    total_rows = max(len(order), len(used_order))
-    
-    # Fill the summary table with the results
-    for i in range(total_rows):
-        row = TableRow()
-        
-        # First column: country and operator
-        if i == 0:
-            c1 = TableCell(); c1.addElement(P(text=country)); row.addElement(c1)
-            c2 = TableCell(); c2.addElement(P(text=operator)); row.addElement(c2)
-        else:
-            row.addElement(TableCell()); row.addElement(TableCell())
-        
-        # Empty column to separate the information
-        row.addElement(TableCell())
-        
-        # Information about supported algorithms
-        if i < len(order):
-            name = order[i]
-            registro = alg_res.get(name)
-            if registro:
-                v: str = registro.get("chosen_value", "")
+    if include_ue_capability:
+        summary = Table(name="UE Crypto Capabilities")
+        doc.spreadsheet.addElement(summary)
+
+        hdr = TableRow()
+        for h in ["Country","Operator","", "Algorithm","Capability","","Algorithm","Chosen"]:
+            cell = TableCell()
+            cell.addElement(P(text=h))
+            hdr.addElement(cell)
+        summary.addElement(hdr)
+
+        for i in range(max(len(order), len(used_order))):
+            row = TableRow()
+            if i == 0:
+                c1 = TableCell(); c1.addElement(P(text=country)); row.addElement(c1)
+                c2 = TableCell(); c2.addElement(P(text=operator)); row.addElement(c2)
             else:
-                v = ""
-            c3 = TableCell(); c3.addElement(P(text=name)); row.addElement(c3)
-            c4 = TableCell(); c4.addElement(P(text=interpret_value(name, v))); row.addElement(c4)
-        else:
-            row.addElement(TableCell()); row.addElement(TableCell())
-        
-        # Empty column to separate the information
-        row.addElement(TableCell())
-        
-        # Information about used algorithms
-        if i < len(used_order):
-            name2 = used_order[i]
-            registro2 = used_res.get(name2)
-            chosen_text = ""
-            if registro2:
-                v2: str = registro2.get("chosen_value", "")
-                all_vals: List[str] = registro2.get("all_values") or []
-                labels: List[str] = []
-                source_vals = all_vals if all_vals else ([v2] if v2 else [])
-                for raw_code in source_vals:
-                    label = interpret_used_value(name2, raw_code)
-                    if label and label not in labels:
-                        labels.append(label)
-                chosen_text = ", ".join(labels)
-            c6 = TableCell(); c6.addElement(P(text=name2)); row.addElement(c6)
-            c7 = TableCell(); c7.addElement(P(text=chosen_text)); row.addElement(c7)
-        else:
-            row.addElement(TableCell()); row.addElement(TableCell())
-        
-        # Add the row to the summary table
-        summary.addElement(row)
+                row.addElement(TableCell()); row.addElement(TableCell())
+            row.addElement(TableCell())
+            if i < len(order):
+                name = order[i]
+                registro = alg_res.get(name)
+                v: str = registro.get("chosen_value", "") if registro else ""
+                c3 = TableCell(); c3.addElement(P(text=name)); row.addElement(c3)
+                c4 = TableCell(); c4.addElement(P(text=interpret_value(name, v))); row.addElement(c4)
+            else:
+                row.addElement(TableCell()); row.addElement(TableCell())
+            row.addElement(TableCell())
+            if i < len(used_order):
+                name2 = used_order[i]
+                registro2 = used_res.get(name2)
+                chosen_text = ""
+                if registro2:
+                    v2: str = registro2.get("chosen_value", "")
+                    all_vals: List[str] = registro2.get("all_values") or []
+                    source_vals = all_vals if all_vals else ([v2] if v2 else [])
+                    labels: List[str] = []
+                    for raw_code in source_vals:
+                        label = interpret_used_value(name2, raw_code)
+                        if label and label not in labels:
+                            labels.append(label)
+                    chosen_text = ", ".join(labels)
+                c6 = TableCell(); c6.addElement(P(text=name2)); row.addElement(c6)
+                c7 = TableCell(); c7.addElement(P(text=chosen_text)); row.addElement(c7)
+            else:
+                row.addElement(TableCell()); row.addElement(TableCell())
+            summary.addElement(row)
 
     # Add tables for each type of result
     # Encryption results
@@ -560,12 +625,22 @@ def build_ods_table(
     add_sheet(doc, "3G Paging",   resultados_3g_paging,  ["Timestamp","Frame","Version","Payload","SubType","Domain","Message","ARFCN","ID Type","ID"], translations_cfg)
     add_sheet(doc, "4G Paging",   resultados_4g_paging,  ["Timestamp","Frame","Version","Payload","SubType","Message","ARFCN","Paging Record","Domain 1","ID Type 1","MMEC 1","ID1","Domain 2","ID Type 2","MMEC 2","ID2","Domain 3","ID Type 3","MMEC 3","ID3","Domain 4","ID Type 4","MMEC 4","ID4","Domain 5","ID Type 5","MMEC 5","ID5"], translations_cfg)
     add_sheet(doc, "5G Paging",   resultados_5g_paging,  ["Timestamp","Frame","Version","Payload","SubType","Message","ARFCN","ID Type","ID"], translations_cfg)
+    # SUCI Schema results
+    add_sheet(doc, "5G SUCI", resultados_5g_sucischema, ["Timestamp","Frame","Version","Payload","SubType","MCC","MNC","Message","ARFCN","ID Type","Scheme Type"], translations_cfg)
+    # VoPS results
+    add_sheet(doc, "4G VoPS", resultados_4g_vops, ["Timestamp","Frame","Version","Payload","SubType","MCC","MNC","TAC","PCI","Message","ARFCN","VoPS"], translations_cfg)
+    add_sheet(doc, "5G VoPS", resultados_5g_vops, ["Timestamp","Frame","Version","Payload","SubType","MCC","MNC","TAC","PCI","Message","ARFCN","VoPS"], translations_cfg)
+    # UE Capability security check results
+    add_sheet(doc, "4G UE Cap Security", {"records": resultados_4g_ue_cap_security}, ["Timestamp","Frame","Version","Payload","SubType","Message","ARFCN","PCI"], translations_cfg)
+    add_sheet(doc, "5G UE Cap Security", {"records": resultados_5g_ue_cap_security}, ["Timestamp","Frame","Version","Payload","SubType","Message","ARFCN","PCI"], translations_cfg)
+    # SIP results
+    add_sheet(doc, "SIP", resultados_sip, ["Timestamp","Frame","Method","Status Code","Realm","Security Mechanism","EAlg"], translations_cfg)
     out_path = Path(out_fn)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))
 
 
-def build_security_ods(output_path: Path, summaries: List["GenerationSummary"], identities: List["IdentityRecord"] | None = None, paging_stats: Dict[str, Dict[str, int]] | None = None, ts_margin_seconds: float = 0.0, tmsi_thresholds: Dict[str, float] | None = None) -> Path:
+def build_security_ods(output_path: Path, summaries: List["GenerationSummary"], identities: List["IdentityRecord"] | None = None, paging_stats: Dict[str, Dict[str, int]] | None = None, ts_margin_seconds: float = 0.0, tmsi_thresholds: Dict[str, float] | None = None, suci_stats: Optional[Any] = None, vops_stats: Optional[Any] = None, ue_cap_security_stats: Optional[Any] = None, sip_ipsec_stats: Optional[Any] = None) -> Path:
     """Create an ODS file with a Crypto Summary sheet showing, per generation.
 
     - number of cipher changes
@@ -611,6 +686,34 @@ def build_security_ods(output_path: Path, summaries: List["GenerationSummary"], 
 
     cipher_cols = sorted(all_ciphers, key=_cipher_sort_key)
 
+    summary_by_name = {s.name: s for s in summaries}
+    metrics_map: Dict[str, Dict[str, Any]] = {}
+    _th_s = tmsi_thresholds or {}
+    try:
+        _collision_max_s = float(_th_s.get("collision_max", 0.01))
+    except Exception:
+        _collision_max_s = 0.01
+    try:
+        _h_norm_min_s = float(_th_s.get("h_norm_min", 0.99))
+    except Exception:
+        _h_norm_min_s = 0.99
+    try:
+        _succ_hamm_p_min_s = float(_th_s.get("succ_hamm_p_min", 0.01))
+    except Exception:
+        _succ_hamm_p_min_s = 0.01
+    try:
+        _chi2_p_min_s = float(_th_s.get("chi2_p_min", 0.01))
+    except Exception:
+        _chi2_p_min_s = 0.01
+    _tmsi_label_map_s = {
+        "2G CS": "2G CS (TMSI)",
+        "2G PS": "2G PS (PTMSI)",
+        "3G CS": "3G NAS CS (TMSI)",
+        "3G PS": "3G NAS PS (PTMSI)",
+        "4G":    "4G NAS (MTMSI)",
+        "5G":    "5G NAS (5G-S-TMSI)",
+    }
+
     doc = OpenDocumentSpreadsheet()
 
     # Define bold styles for headers
@@ -623,6 +726,12 @@ def build_security_ods(output_path: Path, summaries: List["GenerationSummary"], 
     bold_cell = Style(name="BoldCell", family="table-cell")
     bold_cell.addElement(TextProperties(fontweight="bold", fontweightasian="bold", fontweightcomplex="bold"))
     doc.automaticstyles.addElement(bold_cell)
+    pass_para = Style(name="PassPara", family="paragraph")
+    pass_para.addElement(TextProperties(fontweight="bold", color="#007700"))
+    doc.automaticstyles.addElement(pass_para)
+    fail_para = Style(name="FailPara", family="paragraph")
+    fail_para.addElement(TextProperties(fontweight="bold", color="#CC0000"))
+    doc.automaticstyles.addElement(fail_para)
 
     def _add_bold_header_cells(row: TableRow, titles: Iterable[str]) -> None:
         for title in titles:
@@ -1009,6 +1118,325 @@ def build_security_ods(output_path: Path, summaries: List["GenerationSummary"], 
                 cell.addElement(p)
                 row.addElement(cell)
             tab4.addElement(row)
+
+    # Add 5G SUCI Stats tab
+    if suci_stats is not None:
+        tab_suci = Table(name="5G SUCI Stats")
+        doc.spreadsheet.addElement(tab_suci)
+
+        def _mc(text: str, bold: bool = False) -> TableCell:
+            cell = TableCell(stylename=bold_cell if bold else None)
+            cell.addElement(P(stylename=header_para if bold else None, text=text))
+            return cell
+
+        null_scheme_count = suci_stats.scheme_counts.get("NULL scheme", 0)
+        status = "Fail" if null_scheme_count > 0 else "Pass"
+
+        hdr_s = TableRow()
+        _add_bold_header_cells(hdr_s, ("Metric", "Count"))
+        tab_suci.addElement(hdr_s)
+        row = TableRow()
+        row.addElement(_mc("Completed Registrations", bold=True))
+        row.addElement(_mc(str(suci_stats.completed), bold=True))
+        tab_suci.addElement(row)
+        row = TableRow()
+        row.addElement(_mc("Status (NULL scheme)", bold=True))
+        row.addElement(_mc(status, bold=True))
+        tab_suci.addElement(row)
+
+        tab_suci.addElement(TableRow())
+
+        hdr_id = TableRow()
+        _add_bold_header_cells(hdr_id, ("ID Type", "Count"))
+        tab_suci.addElement(hdr_id)
+        for id_type, count in sorted(suci_stats.id_type_counts.items()):
+            row = TableRow()
+            row.addElement(_mc(id_type))
+            row.addElement(_mc(str(count)))
+            tab_suci.addElement(row)
+
+        tab_suci.addElement(TableRow())
+
+        hdr_sc = TableRow()
+        _add_bold_header_cells(hdr_sc, ("SUCI Scheme Type", "Count"))
+        tab_suci.addElement(hdr_sc)
+        for scheme, count in sorted(suci_stats.scheme_counts.items()):
+            row = TableRow()
+            row.addElement(_mc(scheme))
+            row.addElement(_mc(str(count)))
+            tab_suci.addElement(row)
+
+    # Add VoPS Stats tab
+    if vops_stats is not None:
+        tab_vops = Table(name="VoPS Stats")
+        doc.spreadsheet.addElement(tab_vops)
+
+        def _vc(text: str, bold: bool = False) -> TableCell:
+            if bold:
+                cell = TableCell(stylename=bold_cell)
+                cell.addElement(P(stylename=header_para, text=text))
+            else:
+                cell = TableCell()
+                cell.addElement(P(text=text))
+            return cell
+
+        def _vops_status(supported: int, not_supported: int) -> str:
+            if supported == 0 and not_supported == 0:
+                return "N/A"
+            return "Fail" if not_supported > 0 else "Pass"
+
+        # ── Summary section (per generation) ─────────────────────────────
+        hdr_sum = TableRow()
+        _add_bold_header_cells(hdr_sum, ("Generation", "Supported", "Not Supported", "Status"))
+        tab_vops.addElement(hdr_sum)
+
+        for gen, sup, not_sup in (
+            ("4G", vops_stats.supported_4g, vops_stats.not_supported_4g),
+            ("5G", vops_stats.supported_5g, vops_stats.not_supported_5g),
+        ):
+            status = _vops_status(sup, not_sup)
+            row = TableRow()
+            row.addElement(_vc(gen))
+            row.addElement(_vc(str(sup)))
+            row.addElement(_vc(str(not_sup)))
+            row.addElement(_vc(status, bold=True))
+            tab_vops.addElement(row)
+
+        # ── Per-quintuplet breakdown ──────────────────────────────────────
+        if vops_stats.quintuplets:
+            tab_vops.addElement(TableRow())   # blank separator row
+
+            hdr_qui = TableRow()
+            _add_bold_header_cells(hdr_qui, ("Generation", "MCC", "MNC", "TAC", "PCI", "ARFCN", "Supported", "Not Supported", "Status"))
+            tab_vops.addElement(hdr_qui)
+
+            for q in vops_stats.quintuplets:
+                row = TableRow()
+                row.addElement(_vc(q.generation))
+                row.addElement(_vc(q.mcc))
+                row.addElement(_vc(q.mnc))
+                row.addElement(_vc(q.tac))
+                row.addElement(_vc(q.pci))
+                row.addElement(_vc(q.arfcn))
+                row.addElement(_vc(str(q.supported)))
+                row.addElement(_vc(str(q.not_supported)))
+                row.addElement(_vc(q.status, bold=True))
+                tab_vops.addElement(row)
+
+    # Add SIP IPSec Stats tab
+    if sip_ipsec_stats is not None:
+        tab_sip = Table(name="SIP IPSec Stats")
+        doc.spreadsheet.addElement(tab_sip)
+
+        def _sc(text: str, bold: bool = False) -> TableCell:
+            if bold:
+                cell = TableCell(stylename=bold_cell)
+                cell.addElement(P(stylename=header_para, text=text))
+            else:
+                cell = TableCell()
+                cell.addElement(P(text=text))
+            return cell
+
+        hdr_sip = TableRow()
+        _add_bold_header_cells(hdr_sip, ("Criteria", "Pass (valid EAlg)", "Fail (null/absent EAlg)", "Status"))
+        tab_sip.addElement(hdr_sip)
+        row_sip = TableRow()
+        row_sip.addElement(_sc("IPSec EAlg at SIP 401"))
+        row_sip.addElement(_sc(str(sip_ipsec_stats.pass_count)))
+        row_sip.addElement(_sc(str(sip_ipsec_stats.fail_count)))
+        row_sip.addElement(_sc(sip_ipsec_stats.status, bold=True))
+        tab_sip.addElement(row_sip)
+
+    # Add UE Cap Security Stats tab
+    if ue_cap_security_stats is not None:
+        tab_ucs = Table(name="UE Cap Security Stats")
+        doc.spreadsheet.addElement(tab_ucs)
+
+        def _cc(text: str, bold: bool = False) -> TableCell:
+            if bold:
+                cell = TableCell(stylename=bold_cell)
+                cell.addElement(P(stylename=header_para, text=text))
+            else:
+                cell = TableCell()
+                cell.addElement(P(text=text))
+            return cell
+
+        def _ucs_status(before: int, after: int, unknown: int) -> str:
+            if before == 0 and after == 0 and unknown == 0:
+                return "N/A"
+            return "Fail" if before > 0 else "Pass"
+
+        hdr_ucs = TableRow()
+        _add_bold_header_cells(hdr_ucs, ("Generation", "Before Security", "After Security", "Unknown", "Status"))
+        tab_ucs.addElement(hdr_ucs)
+
+        for gen, before, after, unknown in (
+            ("4G", ue_cap_security_stats.before_4g, ue_cap_security_stats.after_4g, ue_cap_security_stats.unknown_4g),
+            ("5G", ue_cap_security_stats.before_5g, ue_cap_security_stats.after_5g, ue_cap_security_stats.unknown_5g),
+        ):
+            status = _ucs_status(before, after, unknown)
+            row = TableRow()
+            row.addElement(_cc(gen))
+            row.addElement(_cc(str(before)))
+            row.addElement(_cc(str(after)))
+            row.addElement(_cc(str(unknown)))
+            row.addElement(_cc(status, bold=True))
+            tab_ucs.addElement(row)
+
+    _GEN_COLS = ["2G CS", "2G PS", "3G CS", "3G PS", "4G", "5G"]
+
+    def _summ_cell(text: str) -> TableCell:
+        cell = TableCell()
+        if text == "Pass":
+            cell.addElement(P(stylename=pass_para, text=text))
+        elif text == "Fail":
+            cell.addElement(P(stylename=fail_para, text=text))
+        else:
+            cell.addElement(P(text=text))
+        return cell
+
+    def _enc_status_s(col: str) -> str:
+        if col == "2G CS":
+            s = summary_by_name.get("2G CS")
+            return "-" if s is None else ("Fail" if s.weak_in_use else "Pass")
+        if col == "2G PS":
+            s = summary_by_name.get("2G PS")
+            return "-" if s is None else ("Fail" if s.weak_in_use else "Pass")
+        if col == "3G CS":
+            s = summary_by_name.get("3G ENC CS") or summary_by_name.get("3G ENC")
+            return "-" if s is None else ("Fail" if s.weak_in_use else "Pass")
+        if col == "3G PS":
+            s = summary_by_name.get("3G ENC PS") or summary_by_name.get("3G ENC")
+            return "-" if s is None else ("Fail" if s.weak_in_use else "Pass")
+        if col == "4G":
+            cands = [summary_by_name[k] for k in ("4G RRC ENC", "4G NAS ENC", "4G UP ENC") if k in summary_by_name]
+            return "-" if not cands else ("Fail" if any(c.weak_in_use for c in cands) else "Pass")
+        if col == "5G":
+            cands = [summary_by_name[k] for k in ("5G RRC ENC", "5G NAS ENC", "5G SA UP ENC", "5G NSA UP ENC") if k in summary_by_name]
+            return "-" if not cands else ("Fail" if any(c.weak_in_use for c in cands) else "Pass")
+        return "-"
+
+    def _int_status_s(col: str) -> str:
+        if col in ("2G CS", "2G PS"):
+            return "-"
+        if col == "3G CS":
+            s = summary_by_name.get("3G INT CS") or summary_by_name.get("3G INT")
+            return "-" if s is None else ("Fail" if s.weak_in_use else "Pass")
+        if col == "3G PS":
+            s = summary_by_name.get("3G INT PS") or summary_by_name.get("3G INT")
+            return "-" if s is None else ("Fail" if s.weak_in_use else "Pass")
+        if col == "4G":
+            cands = [summary_by_name[k] for k in ("4G RRC INT", "4G NAS INT", "4G UP INT") if k in summary_by_name]
+            return "-" if not cands else ("Fail" if any(c.weak_in_use for c in cands) else "Pass")
+        if col == "5G":
+            cands = [summary_by_name[k] for k in ("5G RRC INT", "5G NAS INT", "5G SA UP INT", "5G NSA UP INT") if k in summary_by_name]
+            return "-" if not cands else ("Fail" if any(c.weak_in_use for c in cands) else "Pass")
+        return "-"
+
+    def _tmsi_status_s(col: str, check_fn) -> str:
+        label = _tmsi_label_map_s.get(col)
+        if not label:
+            return "-"
+        m = metrics_map.get(label)
+        if not m:
+            return "-"
+        try:
+            ok = check_fn(m)
+        except Exception:
+            ok = None
+        return "-" if ok is None else ("Pass" if ok else "Fail")
+
+    def _paging_status_s(col: str) -> str:
+        if not paging_stats:
+            return "-"
+        gen_key = {"2G PS": "2G", "3G PS": "3G", "4G": "4G", "5G": "5G"}.get(col)
+        if gen_key is None:
+            return "-"
+        st = paging_stats.get(gen_key, {})
+        if not st or int(st.get("messages", 0) or 0) == 0:
+            return "-"
+        return "Pass" if int(st.get("imsi_ids", 0) or 0) == 0 else "Fail"
+
+    def _suci_status_s(col: str) -> str:
+        if col != "5G" or suci_stats is None:
+            return "-"
+        if suci_stats.completed == 0:
+            return "-"
+        return "Fail" if suci_stats.scheme_counts.get("NULL scheme", 0) > 0 else "Pass"
+
+    def _vops_status_s(col: str) -> str:
+        if vops_stats is None:
+            return "-"
+        if col == "4G":
+            sup, not_sup = vops_stats.supported_4g, vops_stats.not_supported_4g
+        elif col == "5G":
+            sup, not_sup = vops_stats.supported_5g, vops_stats.not_supported_5g
+        else:
+            return "-"
+        if sup == 0 and not_sup == 0:
+            return "-"
+        return "Fail" if not_sup > 0 else "Pass"
+
+    def _uec_status_s(col: str) -> str:
+        if ue_cap_security_stats is None:
+            return "-"
+        if col == "4G":
+            before, after, unk = ue_cap_security_stats.before_4g, ue_cap_security_stats.after_4g, ue_cap_security_stats.unknown_4g
+        elif col == "5G":
+            before, after, unk = ue_cap_security_stats.before_5g, ue_cap_security_stats.after_5g, ue_cap_security_stats.unknown_5g
+        else:
+            return "-"
+        if before == 0 and after == 0 and unk == 0:
+            return "-"
+        return "Fail" if before > 0 else "Pass"
+    
+    def _sip_ipsec_status_s(col: str) -> str:
+        if sip_ipsec_stats is None:
+            return "-"
+        if col not in ("4G", "5G"):
+            return "-"
+        if sip_ipsec_stats.pass_count == 0 and sip_ipsec_stats.fail_count == 0:
+            return "-"
+        return "Fail" if sip_ipsec_stats.fail_count > 0 else "Pass"
+
+    tab_summ = Table(name="Summary")
+    hdr_summ = TableRow()
+    _add_bold_header_cells(hdr_summ, ["Category", "Criteria"] + _GEN_COLS)
+    tab_summ.addElement(hdr_summ)
+
+    def _add_summ_row(category: str, criteria: str, values: List[str]) -> None:
+        row = TableRow()
+        cell = TableCell(); cell.addElement(P(text=category)); row.addElement(cell)
+        cell = TableCell(); cell.addElement(P(text=criteria)); row.addElement(cell)
+        for v in values:
+            row.addElement(_summ_cell(v))
+        tab_summ.addElement(row)
+
+    _add_summ_row("Cryptography Usage", "Weak/Null Encryption",
+        [_enc_status_s(c) for c in _GEN_COLS])
+    _add_summ_row("Cryptography Usage", "Weak/Null Integrity",
+        [_int_status_s(c) for c in _GEN_COLS])
+    _add_summ_row("TMSI Randomness", "Reuse Rate",
+        [_tmsi_status_s(c, lambda m, _t=_collision_max_s: (m.get("collision_rate") < _t) if (m.get("collision_rate") is not None and m.get("samples", 0) >= 2) else None) for c in _GEN_COLS])
+    _add_summ_row("TMSI Randomness", "Shannon Entropy",
+        [_tmsi_status_s(c, lambda m, _t=_h_norm_min_s: (m.get("H_values_norm") > _t) if (m.get("H_values_norm") is not None and m.get("unique", 0) > 1) else None) for c in _GEN_COLS])
+    _add_summ_row("TMSI Randomness", "Hamming Distance",
+        [_tmsi_status_s(c, lambda m, _t=_succ_hamm_p_min_s: (m.get("succ_hd_p") > _t) if (m.get("succ_hd_pairs", 0) > 0 and m.get("succ_hd_p") is not None) else (False if m.get("unique", 0) <= 1 else None)) for c in _GEN_COLS])
+    _add_summ_row("TMSI Randomness", "Nibbles Distribution",
+        [_tmsi_status_s(c, lambda m, _t=_chi2_p_min_s: (m.get("chi2_nibbles_p") > _t) if m.get("chi2_nibbles_p") is not None else (False if m.get("unique", 0) <= 1 else None)) for c in _GEN_COLS])
+    _add_summ_row("IMSI Exposure", "IMSI in Paging",
+        [_paging_status_s(c) for c in _GEN_COLS])
+    _add_summ_row("IMSI Exposure", "No encryption on SUCI",
+        [_suci_status_s(c) for c in _GEN_COLS])
+    _add_summ_row("Forced downgrade", "No VoPS for voice calls",
+        [_vops_status_s(c) for c in _GEN_COLS])
+    _add_summ_row("VoPS Security", "No IPSec on SIP 401",
+        [_sip_ipsec_status_s(c) for c in _GEN_COLS])
+    _add_summ_row("Exposed UE information", "UE Capabilities without security",
+        [_uec_status_s(c) for c in _GEN_COLS])
+
+    tab_summ.parentNode = doc.spreadsheet
+    doc.spreadsheet.childNodes.insert(0, tab_summ)
 
     doc.save(str(output_path))
     return output_path

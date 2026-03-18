@@ -42,11 +42,18 @@ import os
 import signal
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any
+import json as _json
+from collections import defaultdict as _defaultdict
+from selection_profile import SelectionProfile
 from table_builder import build_ods_table
 from security_evaluator import (
     extract_sequences_from_ods,
     extract_ids_from_ods,
     extract_paging_from_ods,
+    extract_suci_stats_from_ods,
+    extract_vops_from_ods,
+    extract_ue_cap_security_from_ods,
+    extract_sip_ipsec_from_ods,
     write_crypto_checker_ods,
 )
 from pcap_analyzer import (
@@ -55,7 +62,9 @@ from pcap_analyzer import (
     extract_5g_nas_enc_info, extract_2g_voice_id, extract_2g_data_id, extract_3g_rrc_id,
     extract_3g_nas_id, extract_4g_rrc_id, extract_4g_nas_id, extract_5g_rrc_id,
     extract_5g_nas_id, extract_2g_paging, extract_3g_paging, extract_4g_paging,
-    extract_5g_paging
+    extract_5g_paging, extract_5g_nas_suci, extract_4g_nas_vops, extract_5g_nas_vops,
+    extract_4g_ue_cap_security_msgs, extract_5g_ue_cap_security_msgs,
+    extract_sip_packets,
 )
 
 
@@ -90,7 +99,13 @@ def get_arguments() -> argparse.Namespace:
     """
     # Create the CLI argument parser
     parser = argparse.ArgumentParser(
-        description="Analyze a PCAP to generate an ODS, capture live to a PCAP (no ODS), parse modem dump(s) to a PCAP (no ODS), or generate a Security ODS from an existing ODS."
+        description=(
+            "RANVDS v2.0.0 — RAN Vulnerability Detection System. "
+            "Analyzes cellular traffic (2G–5G) for security vulnerabilities: weak cipher detection, "
+            "TMSI/GUTI randomness, IMSI exposure, paging leaks, IMS VoPS support (4G/5G), and 5G SUCI analysis. "
+            "Four modes: PCAP analysis (generates multi-tab ODS), live capture (SCAT→PCAP), "
+            "modem dump (SCAT→PCAP), or security evaluation (ODS→Security ODS) "
+        )
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-p", "--pcap", help="Path to the PCAP file to analyze and generate an ODS")
@@ -98,7 +113,17 @@ def get_arguments() -> argparse.Namespace:
                        help="Live capture via SCAT; generates a PCAP and exits (no ODS). The optional IP parameter is currently ignored.")
     group.add_argument("-d", "--dump", nargs="+",
                        help="Parse modem dump file(s) via SCAT and write a PCAP, then exit (no ODS).")
-    group.add_argument("-s", "--security", help="Generate a security report from an existing ODS (e.g., -s table.ods). Default output is <stem>_Security.ods; use --security-outdir to choose the folder and --security-name to set a custom filename.")
+    group.add_argument("-s", "--security", help="Generate a security report from an existing ODS (e.g., -s table.ods). Evaluates cipher strength, TMSI randomness, IMSI paging exposure, 5G SUCI, and VoPS support (per-quintuplet MCC/MNC/TAC/PCI/ARFCN). Default output is <stem>_Security.ods; use --security-outdir to choose the folder and --security-name to set a custom filename.")
+    parser.add_argument(
+        "--profile-json", dest="profile_json", default=None,
+        help=(
+            "JSON-encoded SelectionProfile dict to control which analysis modules run. "
+            "Keys include per-generation encryption (enc_2g_cs, enc_4g_rrc, …), "
+            "identity (id_4g_nas, …), paging (paging_2g, …), "
+            "VoPS (vops_4g, vops_5g), SUCI (suci_5g), and UE Capability (ue_capability). "
+            "All keys default to true. Only meaningful with --pcap or --security."
+        ),
+    )
     # Additional parameters for Live mode (SCAT)
     parser.add_argument(
         "-t", dest="scat_type", choices=["sec", "qc"], default="sec",
@@ -208,7 +233,8 @@ def detect_cell(scat_type: str) -> Tuple[str, str]:
 
 def load_fields(cfg_path: Path) -> Tuple[
     Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str],
-    Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str]
+    Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str],
+    Dict[str, str], Dict[str, str]
 ]:
     """
     Load field configuration from an CFG file (fields.cfg).
@@ -237,7 +263,8 @@ def load_fields(cfg_path: Path) -> Tuple[
     lteNas = dict(cfg["4GNASFields"])
     nrRrc = dict(cfg["5GRRCFields"])
     nrNas = dict(cfg["5GNASFields"])
-    return alg, used, gsm, umts, lteRcc, lteNas, nrRrc, nrNas, misc
+    sip = dict(cfg["SIPFields"]) if cfg.has_section("SIPFields") else {}
+    return alg, used, gsm, umts, lteRcc, lteNas, nrRrc, nrNas, misc, sip
 
 
 def load_translations(cfg_path: Path) -> configparser.ConfigParser:
@@ -535,7 +562,7 @@ def start_dump_analyzer_nonblocking(
     return proc, pcap_path
 
 
-def _security_entry(ods_path_str: str, output_dir_str: str, retransmit_window_seconds: float = 10.0, tmsi_thresholds: Dict[str, float] | None = None) -> None:
+def _security_entry(ods_path_str: str, output_dir_str: str, retransmit_window_seconds: float = 10.0, tmsi_thresholds: Dict[str, float] | None = None, profile_dict: Dict[str, bool] | None = None) -> None:
     """Child-process entry: generate Security ODS from an existing ODS file.
 
     Reads algorithm sequences, identities and paging stats from the input ODS
@@ -566,19 +593,41 @@ def _security_entry(ods_path_str: str, output_dir_str: str, retransmit_window_se
         except Exception:
             pass
 
+        profile = SelectionProfile.from_dict(profile_dict) if profile_dict else SelectionProfile()
         sequences = extract_sequences_from_ods(ods_in)
-        identities = extract_ids_from_ods(ods_in)
-        paging_stats = extract_paging_from_ods(ods_in)
+        sequences = profile.filter_sequences(sequences)
+        _raw_ids = extract_ids_from_ods(ods_in) if profile.any_id_enabled() else []
+        identities = profile.filter_identity_records(_raw_ids) if _raw_ids else None
+        _raw_paging = extract_paging_from_ods(ods_in) if profile.any_paging_enabled() else {}
+        paging_stats = profile.filter_paging_stats(_raw_paging) if _raw_paging else None
+        suci_stats = extract_suci_stats_from_ods(ods_in) if profile.suci_5g else None
+        vops_stats = extract_vops_from_ods(ods_in) if (profile.vops_4g or profile.vops_5g) else None
+        ue_cap_security_stats = None
+        if profile.ue_cap_security_4g or profile.ue_cap_security_5g:
+            ue_cap_security_stats = extract_ue_cap_security_from_ods(ods_in)
+            if not profile.ue_cap_security_4g:
+                ue_cap_security_stats.before_4g = 0
+                ue_cap_security_stats.after_4g = 0
+                ue_cap_security_stats.unknown_4g = 0
+            if not profile.ue_cap_security_5g:
+                ue_cap_security_stats.before_5g = 0
+                ue_cap_security_stats.after_5g = 0
+                ue_cap_security_stats.unknown_5g = 0
+        sip_ipsec_stats = extract_sip_ipsec_from_ods(ods_in) if profile.sip_ipsec else None
 
         prefix = ods_in.stem
         out_path = write_crypto_checker_ods(
             out_dir,
             prefix,
             sequences,
-            identities=identities,
-            paging_stats=paging_stats,
+            identities=identities or None,
+            paging_stats=paging_stats or None,
             ts_margin_seconds=float(retransmit_window_seconds or 0.0),
             tmsi_thresholds=tmsi_thresholds,
+            suci_stats=suci_stats,
+            vops_stats=vops_stats,
+            ue_cap_security_stats=ue_cap_security_stats,
+            sip_ipsec_stats=sip_ipsec_stats,
         )
         try:
             logging.info("Security report generated: %s", out_path)
@@ -594,6 +643,11 @@ def _security_entry(ods_path_str: str, output_dir_str: str, retransmit_window_se
             code = 1
         _os._exit(code)
     except Exception:
+        try:
+            import traceback as _tb
+            logging.error("Security generation error:\n%s", _tb.format_exc())
+        except Exception:
+            pass
         _os._exit(1)
 
 
@@ -602,6 +656,7 @@ def start_security_report_nonblocking(
     output_dir: Optional[str] = None,
     retransmit_window_seconds: float = 10.0,
     tmsi_thresholds: Dict[str, float] | None = None,
+    profile_dict: Dict[str, bool] | None = None,
 ) -> Any:
     """Launch Security report generation in a child process and return immediately.
 
@@ -615,7 +670,7 @@ def start_security_report_nonblocking(
     out_dir = Path(output_dir) if output_dir else Path.cwd()
     p = mp.Process(
         target=_security_entry,
-        args=(str(ods_path), str(out_dir), float(retransmit_window_seconds or 0.0), tmsi_thresholds),
+        args=(str(ods_path), str(out_dir), float(retransmit_window_seconds or 0.0), tmsi_thresholds, profile_dict),
         daemon=False,
     )
     p.start()
@@ -845,81 +900,30 @@ def choose_final_values_generic(
     return result
 
 
-def get_best_mcc_mnc_from_results(
-    r2g_voz: Dict[str, List[Dict[str, Any]]],
-    r2g_dados: Dict[str, List[Dict[str, Any]]],
-    r3g_enc: Dict[str, List[Dict[str, Any]]],
-    r3g_int: Dict[str, List[Dict[str, Any]]],
-    r4g_rrc_enc: Dict[str, List[Dict[str, Any]]],
-    r4g_rrc_int: Dict[str, List[Dict[str, Any]]],
-    r4g_nas_enc: Dict[str, List[Dict[str, Any]]],
-    r4g_nas_int: Dict[str, List[Dict[str, Any]]],
-    r5g_rrc_enc: Dict[str, List[Dict[str, Any]]],
-    r5g_rrc_int: Dict[str, List[Dict[str, Any]]],
-    r5g_nas_enc: Dict[str, List[Dict[str, Any]]],
-    r5g_nas_int: Dict[str, List[Dict[str, Any]]]
-) -> Tuple[str, str]:
-    """Select the best MCC/MNC pair from per-technology extraction results.
+def get_best_mcc_mnc_from_results(*sources: Dict[str, List[Dict[str, Any]]], n_priority: int = 8) -> Tuple[str, str]:
+    """Select the best MCC/MNC pair from any number of extraction result dicts.
 
-    Counts occurrences of MCC and MNC independently across results from
-    multiple technologies (2G–5G). For ties, prefers the value that was
-    observed first according to a predefined source priority order.
+    Uses a two-tier strategy:
+    1. High-priority sources (first ``n_priority`` args, default 8 = 5G+4G enc/int):
+       if they yield any MCC or MNC, their result is returned immediately.
+    2. Fallback: count across all remaining sources.
+
+    Within each tier, the most-frequent value wins; ties are broken by first-seen order.
 
     Args:
-        r2g_voz: 2G CS algorithm results grouped by algorithm name.
-        r2g_dados: 2G PS algorithm results grouped by algorithm name.
-        r3g_enc: 3G confidentiality results grouped by algorithm name.
-        r3g_int: 3G integrity results grouped by algorithm name.
-        r4g_rrc_enc: 4G RRC confidentiality results.
-        r4g_rrc_int: 4G RRC integrity results.
-        r4g_nas_enc: 4G NAS confidentiality results.
-        r4g_nas_int: 4G NAS integrity results.
-        r5g_rrc_enc: 5G RRC confidentiality results.
-        r5g_rrc_int: 5G RRC integrity results.
-        r5g_nas_enc: 5G NAS confidentiality results.
-        r5g_nas_int: 5G NAS integrity results.
+        *sources: Result dicts keyed by algorithm name or frame number; each
+                  value is a list of record dicts that may contain "MCC"/"MNC".
+        n_priority: Number of leading sources treated as high-priority tier.
 
     Returns:
         Tuple[str, str]: The (MCC, MNC) selected as best estimates.
     """
-    # Count MCC and MNC independently and return the most frequent of each.
-    # Tie-breaker: prefer the one seen first considering the priority order below.
-    sources = [
-        r5g_rrc_enc, r5g_rrc_int, r5g_nas_enc, r5g_nas_int,
-        r4g_rrc_enc, r4g_rrc_int, r4g_nas_enc, r4g_nas_int,
-        r3g_enc, r3g_int,
-        r2g_voz, r2g_dados,
-    ]
-
-    mcc_counts: Dict[str, int] = {}
-    mnc_counts: Dict[str, int] = {}
-    mcc_first_seen: Dict[str, int] = {}
-    mnc_first_seen: Dict[str, int] = {}
-    order_idx = 0
 
     def _normalize(v: Any) -> str:
         s = str(v).strip()
-        # Remove leading zeros only for numeric values
         if s.isdigit():
             s = s.lstrip("0") or "0"
         return s
-
-    for src in sources:
-        for alg in src.values():
-            for entry in alg:
-                mcc_v = entry.get("MCC")
-                if mcc_v not in (None, ""):
-                    mcc_s = _normalize(mcc_v)
-                    mcc_counts[mcc_s] = mcc_counts.get(mcc_s, 0) + 1
-                    if mcc_s not in mcc_first_seen:
-                        mcc_first_seen[mcc_s] = order_idx
-                mnc_v = entry.get("MNC")
-                if mnc_v not in (None, ""):
-                    mnc_s = _normalize(mnc_v)
-                    mnc_counts[mnc_s] = mnc_counts.get(mnc_s, 0) + 1
-                    if mnc_s not in mnc_first_seen:
-                        mnc_first_seen[mnc_s] = order_idx
-                order_idx += 1
 
     def _pick_best(counts: Dict[str, int], first_seen: Dict[str, int]) -> str:
         if not counts:
@@ -930,9 +934,34 @@ def get_best_mcc_mnc_from_results(
             return candidates[0]
         return min(candidates, key=lambda v: first_seen.get(v, float("inf")))
 
-    best_mcc = _pick_best(mcc_counts, mcc_first_seen)
-    best_mnc = _pick_best(mnc_counts, mnc_first_seen)
-    return best_mcc, best_mnc
+    def _extract(srcs) -> Tuple[str, str]:
+        mcc_counts: Dict[str, int] = {}
+        mnc_counts: Dict[str, int] = {}
+        mcc_first_seen: Dict[str, int] = {}
+        mnc_first_seen: Dict[str, int] = {}
+        order_idx = 0
+        for src in srcs:
+            for alg in src.values():
+                for entry in alg:
+                    mcc_v = entry.get("MCC")
+                    if mcc_v not in (None, ""):
+                        mcc_s = _normalize(mcc_v)
+                        mcc_counts[mcc_s] = mcc_counts.get(mcc_s, 0) + 1
+                        if mcc_s not in mcc_first_seen:
+                            mcc_first_seen[mcc_s] = order_idx
+                    mnc_v = entry.get("MNC")
+                    if mnc_v not in (None, ""):
+                        mnc_s = _normalize(mnc_v)
+                        mnc_counts[mnc_s] = mnc_counts.get(mnc_s, 0) + 1
+                        if mnc_s not in mnc_first_seen:
+                            mnc_first_seen[mnc_s] = order_idx
+                    order_idx += 1
+        return _pick_best(mcc_counts, mcc_first_seen), _pick_best(mnc_counts, mnc_first_seen)
+
+    mcc, mnc = _extract(sources[:n_priority])
+    if mcc or mnc:
+        return mcc, mnc
+    return _extract(sources[n_priority:])
 
 
 def lookup_operator(
@@ -1067,6 +1096,7 @@ def main() -> None:
         NR_RRC_FIELDS,
         NR_NAS_FIELDS,
         MISC_FIELDS,
+        SIP_FIELDS,
     ) = load_fields(fields_cfg_file)
     ORDER: List[str] = list(ALGORITHM_FIELDS.keys())
     USED_ORDER: List[str] = list(USED_ALGORITHM_FIELDS.keys())
@@ -1079,7 +1109,8 @@ def main() -> None:
         list(LTE_RRC_FIELDS.values()) +
         list(LTE_NAS_FIELDS.values()) +
         list(NR_RRC_FIELDS.values()) +
-        list(NR_NAS_FIELDS.values())
+        list(NR_NAS_FIELDS.values()) +
+        list(SIP_FIELDS.values())
     )
     # Security-only mode (-s): read existing ODS and generate <stem>_Security.ods
     if getattr(args, "security", None):
@@ -1089,12 +1120,39 @@ def main() -> None:
             return
         logging.info("Reading ODS for security: %s", ods_in)
         sequences = extract_sequences_from_ods(ods_in, exclude_tabs=["UE Capability"])  # skip capability summary
-        identities = extract_ids_from_ods(ods_in)
-        paging_stats = extract_paging_from_ods(ods_in)
+        _sec_profile_json = getattr(args, "profile_json", None)
+        _sec_profile = SelectionProfile.from_dict(_json.loads(_sec_profile_json)) if _sec_profile_json else SelectionProfile()
+        sequences = _sec_profile.filter_sequences(sequences)
+        _raw_ids = extract_ids_from_ods(ods_in) if _sec_profile.any_id_enabled() else []
+        identities = _sec_profile.filter_identity_records(_raw_ids) if _raw_ids else None
+        _raw_paging = extract_paging_from_ods(ods_in) if _sec_profile.any_paging_enabled() else {}
+        paging_stats = _sec_profile.filter_paging_stats(_raw_paging) if _raw_paging else None
+        suci_stats = extract_suci_stats_from_ods(ods_in) if _sec_profile.suci_5g else None
+        vops_stats = extract_vops_from_ods(ods_in) if _sec_profile.any_vops_enabled() else None
+        if vops_stats is not None and not _sec_profile.vops_4g:
+            vops_stats.supported_4g = 0
+            vops_stats.not_supported_4g = 0
+            vops_stats.quintuplets = [q for q in vops_stats.quintuplets if q.generation != "4G"]
+        if vops_stats is not None and not _sec_profile.vops_5g:
+            vops_stats.supported_5g = 0
+            vops_stats.not_supported_5g = 0
+            vops_stats.quintuplets = [q for q in vops_stats.quintuplets if q.generation != "5G"]
+        ue_cap_security_stats = None
+        if _sec_profile.ue_cap_security_4g or _sec_profile.ue_cap_security_5g:
+            ue_cap_security_stats = extract_ue_cap_security_from_ods(ods_in)
+            if not _sec_profile.ue_cap_security_4g:
+                ue_cap_security_stats.before_4g = 0
+                ue_cap_security_stats.after_4g = 0
+                ue_cap_security_stats.unknown_4g = 0
+            if not _sec_profile.ue_cap_security_5g:
+                ue_cap_security_stats.before_5g = 0
+                ue_cap_security_stats.after_5g = 0
+                ue_cap_security_stats.unknown_5g = 0
         # Prefix: use exactly the stem of the analyzed file
         prefix = ods_in.stem
         out_dir = Path(getattr(args, "security_outdir", "")) if getattr(args, "security_outdir", None) else ods_in.parent
-        out = write_crypto_checker_ods(out_dir, prefix, sequences, identities=identities, paging_stats=paging_stats)
+        sip_ipsec_stats = extract_sip_ipsec_from_ods(ods_in) if _sec_profile.sip_ipsec else None
+        out = write_crypto_checker_ods(out_dir, prefix, sequences, identities=identities or None, paging_stats=paging_stats or None, suci_stats=suci_stats, vops_stats=vops_stats, ue_cap_security_stats=ue_cap_security_stats, sip_ipsec_stats=sip_ipsec_stats)
         # Optional rename to custom filename
         desired_name = (getattr(args, "security_name", None) or "").strip()
         if desired_name:
@@ -1213,6 +1271,11 @@ def main() -> None:
 
     packets = parse_tshark_lines(lines, TSHARK_FIELDS)
 
+    # Parse selection profile (controls which modules run)
+    _profile_json = getattr(args, "profile_json", None)
+    _pcap_profile = SelectionProfile.from_dict(_json.loads(_profile_json)) if _profile_json else SelectionProfile()
+    _e = _defaultdict(list)  # empty placeholder for disabled modules
+
     # Summary of supported and used algorithms
     alg_res = choose_final_values_generic(packets, ALGORITHM_FIELDS)
     used_res = choose_final_values_generic(packets, USED_ALGORITHM_FIELDS)
@@ -1221,69 +1284,115 @@ def main() -> None:
     # Encryption and integrity algorithms
     r2g_voz_enc = extract_2g_voice_enc_info(
         packets, USED_ALGORITHM_FIELDS, GSM_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.enc_2g_cs else _e
     r2g_dados_enc = extract_2g_data_enc_info(
         packets, USED_ALGORITHM_FIELDS, GSM_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
-    r3g_enc, r3g_int = extract_3g_enc_info(
+    ) if _pcap_profile.enc_2g_ps else _e
+    _r3g_enc_raw, _r3g_int_raw = extract_3g_enc_info(
         packets, USED_ALGORITHM_FIELDS, UMTS_FIELDS, MISC_FIELDS
-   )
-    r4g_rrc_enc, r4g_rrc_int = extract_4g_rrc_enc_info(
+    ) if (_pcap_profile.enc_3g or _pcap_profile.int_3g) else (_e, _e)
+    r3g_enc = _r3g_enc_raw if _pcap_profile.enc_3g else _e
+    r3g_int = _r3g_int_raw if _pcap_profile.int_3g else _e
+    _r4g_rrc_enc_raw, _r4g_rrc_int_raw = extract_4g_rrc_enc_info(
         packets, USED_ALGORITHM_FIELDS, LTE_RRC_FIELDS, MISC_FIELDS
-    )
-    r4g_nas_enc, r4g_nas_int = extract_4g_nas_enc_info(
+    ) if (_pcap_profile.enc_4g_rrc or _pcap_profile.int_4g_rrc) else (_e, _e)
+    r4g_rrc_enc = _r4g_rrc_enc_raw if _pcap_profile.enc_4g_rrc else _e
+    r4g_rrc_int = _r4g_rrc_int_raw if _pcap_profile.int_4g_rrc else _e
+    _r4g_nas_enc_raw, _r4g_nas_int_raw = extract_4g_nas_enc_info(
         packets, USED_ALGORITHM_FIELDS, LTE_NAS_FIELDS, MISC_FIELDS
-    )
-    r5g_rrc_enc, r5g_rrc_int = extract_5g_rrc_enc_info(
+    ) if (_pcap_profile.enc_4g_nas or _pcap_profile.int_4g_nas) else (_e, _e)
+    r4g_nas_enc = _r4g_nas_enc_raw if _pcap_profile.enc_4g_nas else _e
+    r4g_nas_int = _r4g_nas_int_raw if _pcap_profile.int_4g_nas else _e
+    _r5g_rrc_enc_raw, _r5g_rrc_int_raw = extract_5g_rrc_enc_info(
         packets, USED_ALGORITHM_FIELDS, NR_RRC_FIELDS, MISC_FIELDS
-    )
-    r5g_nas_enc, r5g_nas_int = extract_5g_nas_enc_info(
+    ) if (_pcap_profile.enc_5g_rrc or _pcap_profile.int_5g_rrc) else (_e, _e)
+    r5g_rrc_enc = _r5g_rrc_enc_raw if _pcap_profile.enc_5g_rrc else _e
+    r5g_rrc_int = _r5g_rrc_int_raw if _pcap_profile.int_5g_rrc else _e
+    _r5g_nas_enc_raw, _r5g_nas_int_raw = extract_5g_nas_enc_info(
         packets, USED_ALGORITHM_FIELDS, NR_NAS_FIELDS, MISC_FIELDS
-    )
+    ) if (_pcap_profile.enc_5g_nas or _pcap_profile.int_5g_nas) else (_e, _e)
+    r5g_nas_enc = _r5g_nas_enc_raw if _pcap_profile.enc_5g_nas else _e
+    r5g_nas_int = _r5g_nas_int_raw if _pcap_profile.int_5g_nas else _e
 
     # User identifiers
     r2g_voz_id = extract_2g_voice_id(
         packets, GSM_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_2g_voice else _e
     r2g_dados_id = extract_2g_data_id(
         packets, GSM_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_2g_data else _e
     r3g_rrc_id = extract_3g_rrc_id(
         packets, UMTS_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_3g_rrc else _e
     r3g_nas_id = extract_3g_nas_id(
         packets, UMTS_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_3g_nas else _e
     r4g_rrc_id = extract_4g_rrc_id(
         packets, LTE_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_4g_rrc else _e
     r4g_nas_id = extract_4g_nas_id(
         packets, LTE_NAS_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_4g_nas else _e
     r5g_rrc_id = extract_5g_rrc_id(
         packets, NR_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_5g_rrc else _e
     r5g_nas_id = extract_5g_nas_id(
         packets, NR_NAS_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.id_5g_nas else _e
 
     # Paging identifiers
     r2g_paging = extract_2g_paging(
         packets, GSM_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.paging_2g else _e
     r3g_paging = extract_3g_paging(
         packets, UMTS_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.paging_3g else _e
     r4g_paging = extract_4g_paging(
         packets, LTE_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.paging_4g else _e
     r5g_paging = extract_5g_paging(
         packets, NR_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
-    )
+    ) if _pcap_profile.paging_5g else _e
+
+    # SUCI Schema
+    r5g_sucischema = extract_5g_nas_suci(
+        packets, NR_NAS_FIELDS, MISC_FIELDS, TRANSLATIONS
+    ) if _pcap_profile.suci_5g else _e
+
+    # VoPS
+    r4g_vops = extract_4g_nas_vops(
+        packets, LTE_NAS_FIELDS, LTE_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
+    ) if _pcap_profile.vops_4g else _e
+    r5g_vops = extract_5g_nas_vops(
+        packets, NR_NAS_FIELDS, MISC_FIELDS, TRANSLATIONS
+    ) if _pcap_profile.vops_5g else _e
+
+    # SIP
+    r_sip = extract_sip_packets(
+        packets, SIP_FIELDS, MISC_FIELDS
+    ) if _pcap_profile.sip_ipsec else _e
+
+    # UE Capability Security check
+    r4g_ue_cap_sec = extract_4g_ue_cap_security_msgs(
+        packets, LTE_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
+    ) if _pcap_profile.ue_cap_security_4g else []
+    r5g_ue_cap_sec = extract_5g_ue_cap_security_msgs(
+        packets, NR_RRC_FIELDS, MISC_FIELDS, TRANSLATIONS
+    ) if _pcap_profile.ue_cap_security_5g else []
 
     # Network identifiers
     mcc, mnc = get_best_mcc_mnc_from_results(
-        r2g_voz_enc, r2g_dados_enc, r3g_enc, r3g_int, r4g_rrc_enc, r4g_rrc_int, r4g_nas_enc, r4g_nas_int, r5g_rrc_enc, r5g_rrc_int, r5g_nas_enc, r5g_nas_int
+        r5g_nas_enc, r5g_nas_int, r5g_rrc_enc, r5g_rrc_int,
+        r4g_nas_enc, r4g_nas_int, r4g_rrc_enc, r4g_rrc_int,
+        r3g_enc, r3g_int,
+        r2g_voz_enc, r2g_dados_enc,
+        r5g_vops, r4g_vops,
+        r5g_nas_id, r4g_nas_id,
+        r5g_sucischema,
+        r3g_nas_id, r3g_rrc_id,
+        r2g_voz_id, r2g_dados_id,
+        r2g_paging, r3g_paging, r4g_paging, r5g_paging,
+        r5g_rrc_id, r4g_rrc_id,
     )
     country, operator = lookup_operator(mcc, mnc)
 
@@ -1332,10 +1441,17 @@ def main() -> None:
         resultados_3g_paging=r3g_paging,
         resultados_4g_paging=r4g_paging,
         resultados_5g_paging=r5g_paging,
+        resultados_5g_sucischema=r5g_sucischema,
+        resultados_4g_vops=r4g_vops,
+        resultados_5g_vops=r5g_vops,
+        resultados_4g_ue_cap_security=r4g_ue_cap_sec,
+        resultados_5g_ue_cap_security=r5g_ue_cap_sec,
+        resultados_sip=r_sip,
         country=country,
         operator=operator,
         translations_cfg=translations_dict,
-        out_fn=str(out_fn)
+        out_fn=str(out_fn),
+        include_ue_capability=_pcap_profile.ue_capability,
     )
     logging.info("ODS generated: %s", out_fn)
 

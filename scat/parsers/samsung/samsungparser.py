@@ -369,6 +369,7 @@ class SamsungParser:
                         continue
                     payload = pkt[17:]
                     parse_result = self.parse_diag(generate_sdm_packet(logger_header.direction, logger_header.group, logger_header.command, payload, logger_header.timestamp))
+                    #parse_result = self.parse_diag(generate_sdm_packet(sdm_command_type.IPC_DM_CMD, logger_header.group, logger_header.command, payload, logger_header.timestamp))
                     if parse_result is not None:
                         parse_result['ts'] = util.parse_sdm_ts(logger_header.logger_ts_up, logger_header.logger_ts_low)
                         self.postprocess_parse_result(parse_result)

@@ -41,10 +41,15 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
+from kivy.uix.checkbox import CheckBox
+from kivy.uix.gridlayout import GridLayout
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.spinner import Spinner
 from kivy.uix.image import Image
+from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
+from kivy.uix.widget import Widget
 from kivy.core.window import Window
+import json as _gui_json
 
 
 def _find_app_icon() -> str | None:
@@ -93,460 +98,513 @@ def _find_app_icon() -> str | None:
 KV = r"""
 <VDSRoot>:
     orientation: 'vertical'
-    spacing: '4dp'
-    padding: '6dp'
+    spacing: '0dp'
+    padding: '0dp'
 
-    #BoxLayout:
-    #    size_hint_y: None
-    #    height: '72dp'
-    #    spacing: '8dp'
-    #    Image:
-    #        source: app.icon if app.icon else ''
-    #        size_hint_x: None
-    #        width: '72dp'
-    #        allow_stretch: True
-    #        keep_ratio: True
-    #    Label:
-    #        markup: True
-    #        text: '[b]RANVDS - Radio Access Network Vulnerability Detection System[/b]'
-    #        text_size: self.size
-    #        halign: 'left'
-    #        valign: 'middle'
-    #        shorten: True
-    #        shorten_from: 'right'
-
-    # --- Live Capture (top) ---
-    Label:
-        markup: True
-        text: '[b]Live Capture (.pcap output)[/b]'
-        size_hint_y: None
-        height: '26dp'
-
+    # ── Header bar ───────────────────────────────────────────────────────────
     BoxLayout:
         size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
+        height: '48dp'
+        canvas.before:
+            Color:
+                rgba: 0.09, 0.13, 0.22, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
         Label:
-            text: 'Target IP:'
-            size_hint_x: None
-            width: '90dp'
-        TextInput:
-            text: root.live_ip
-            multiline: False
-            hint_text: 'default 127.0.0.1'
-            on_text: root.live_ip = self.text
+            markup: True
+            text: '[b]RANVDS[/b]  —  Radio Access Network Vulnerability Detection System'
+            font_size: '15sp'
+            halign: 'center'
+            valign: 'middle'
+            color: 0.88, 0.94, 1, 1
 
+    # ── Main tabs ────────────────────────────────────────────────────────────
+    TabbedPanel:
+        do_default_tab: False
+        tab_width: '200dp'
+        tab_height: '36dp'
+
+        # ════════════════════════════════════════════════════════════════
+        #  Tab 1 — Live Capture
+        # ════════════════════════════════════════════════════════════════
+        TabbedPanelItem:
+            text: 'Live Capture'
+            BoxLayout:
+                orientation: 'vertical'
+                padding: '18dp'
+                spacing: '10dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Target IP:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.live_ip
+                        multiline: False
+                        hint_text: '127.0.0.1'
+                        on_text: root.live_ip = self.text
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'SCAT type:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Spinner:
+                        text: root.scat_type
+                        values: ['sec', 'qc']
+                        size_hint_x: None
+                        width: '110dp'
+                        on_text: root.scat_type = self.text
+                    Label:
+                        text: 'Interface:'
+                        size_hint_x: None
+                        width: '100dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.scat_iface
+                        multiline: False
+                        size_hint_x: None
+                        width: '90dp'
+                        on_text: root.scat_iface = self.text
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Model (optional):'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.scat_model
+                        multiline: False
+                        hint_text: 'e.g. e5123'
+                        on_text: root.scat_model = self.text
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Start magic (optional):'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.scat_start_magic
+                        multiline: False
+                        hint_text: 'e.g. 0xffffffff'
+                        on_text: root.scat_start_magic = self.text
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Output folder:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        text: root.live_output_dir
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('live_dir')
+
+                Widget:
+                    size_hint_y: None
+                    height: '16dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '46dp'
+                    spacing: '10dp'
+                    Button:
+                        text: 'Start Live Capture'
+                        font_size: '14sp'
+                        disabled: root.is_busy or root.is_live_running
+                        on_release: root.run_live_generation()
+                    Button:
+                        text: 'Stop Capture'
+                        size_hint_x: None
+                        width: '150dp'
+                        disabled: not root.is_live_running
+                        on_release: root.stop_live_capture()
+
+        # ════════════════════════════════════════════════════════════════
+        #  Tab 2 — Modem Log Analyzer
+        # ════════════════════════════════════════════════════════════════
+        TabbedPanelItem:
+            text: 'Modem Log'
+            BoxLayout:
+                orientation: 'vertical'
+                padding: '18dp'
+                spacing: '10dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Dump type:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Spinner:
+                        text: root.dump_type
+                        values: ['sec', 'qc']
+                        size_hint_x: None
+                        width: '110dp'
+                        on_text: root.dump_type = self.text
+                    Label:
+                        text: 'Model (optional):'
+                        size_hint_x: None
+                        width: '160dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.dump_model
+                        multiline: False
+                        hint_text: 'e.g. e5123'
+                        on_text: root.dump_model = self.text
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Dump file:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        text: root.dump_path if root.dump_path else '(no file selected)'
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('dump')
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Output folder:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        text: root.dump_output_dir
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('dump_dir')
+
+                Widget:
+                    size_hint_y: None
+                    height: '16dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '46dp'
+                    spacing: '10dp'
+                    Button:
+                        text: 'Start Analyzer'
+                        font_size: '14sp'
+                        disabled: root.is_busy or root.is_dump_running or not root.dump_path
+                        on_release: root.run_dump_analysis()
+                    Button:
+                        text: 'Stop Analyzer'
+                        size_hint_x: None
+                        width: '150dp'
+                        disabled: not root.is_dump_running
+                        on_release: root.stop_dump_analysis()
+
+        # ════════════════════════════════════════════════════════════════
+        #  Tab 3 — PCAP Analyzer
+        # ════════════════════════════════════════════════════════════════
+        TabbedPanelItem:
+            text: 'PCAP Analyzer'
+            BoxLayout:
+                orientation: 'vertical'
+                padding: '18dp'
+                spacing: '10dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'PCAP file:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        text: root.pcap_path if root.pcap_path else '(no file selected)'
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('pcap')
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Output folder:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        text: root.pcap_output_dir
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('pcap_dir')
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Output name (optional):'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.output_name
+                        multiline: False
+                        hint_text: 'e.g. result.ods  (auto-named if blank)'
+                        on_text: root.output_name = self.text
+
+                Widget:
+                    size_hint_y: None
+                    height: '16dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '46dp'
+                    spacing: '10dp'
+                    Button:
+                        text: 'Analysis Options'
+                        size_hint_x: None
+                        width: '210dp'
+                        on_release: root.open_pcap_selection_menu()
+                    Button:
+                        text: 'Generate ODS'
+                        font_size: '14sp'
+                        disabled: root.is_busy or not root.pcap_path
+                        on_release: root.run_pcap_generation()
+
+        # ════════════════════════════════════════════════════════════════
+        #  Tab 4 — Security Evaluator
+        # ════════════════════════════════════════════════════════════════
+        TabbedPanelItem:
+            text: 'Security Evaluator'
+            BoxLayout:
+                orientation: 'vertical'
+                padding: '18dp'
+                spacing: '10dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'ODS file:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        id: ods_label
+                        text: root.ods_path if root.ods_path else '(no file selected)'
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('ods')
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Output folder:'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    Label:
+                        id: out_label
+                        text: root.output_dir
+                        text_size: self.size
+                        halign: 'left'
+                        valign: 'middle'
+                        shorten: True
+                        shorten_from: 'left'
+                    Button:
+                        text: 'Browse'
+                        size_hint_x: None
+                        width: '110dp'
+                        on_release: root.open_file_chooser('dir')
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '38dp'
+                    spacing: '8dp'
+                    Label:
+                        text: 'Output name (optional):'
+                        size_hint_x: None
+                        width: '170dp'
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+                    TextInput:
+                        text: root.security_output_name
+                        multiline: False
+                        hint_text: 'e.g. security.ods  (auto-named if blank)'
+                        on_text: root.security_output_name = self.text
+
+                Widget:
+                    size_hint_y: None
+                    height: '16dp'
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '46dp'
+                    spacing: '10dp'
+                    Button:
+                        text: 'Evaluator Options'
+                        size_hint_x: None
+                        width: '210dp'
+                        on_release: root.open_security_selection_menu()
+                    Button:
+                        text: 'Generate Security ODS'
+                        font_size: '14sp'
+                        disabled: root.is_busy or not root.ods_path
+                        on_release: root.run_generation()
+
+    # ── Log area (always visible) ────────────────────────────────────────────
     BoxLayout:
         size_hint_y: None
-        height: '30dp'
+        height: '24dp'
+        padding: ('10dp', '2dp')
         spacing: '6dp'
+        canvas.before:
+            Color:
+                rgba: 0.12, 0.12, 0.14, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
         Label:
-            text: 'SCAT type:'
-            size_hint_x: None
-            width: '90dp'
-        Spinner:
-            text: root.scat_type
-            values: ['sec', 'qc']
-            size_hint_x: None
-            width: '100dp'
-            on_text: root.scat_type = self.text
-        Label:
-            text: 'Interface:'
-            size_hint_x: None
-            width: '80dp'
-        TextInput:
-            text: root.scat_iface
-            multiline: False
-            size_hint_x: None
-            width: '80dp'
-            on_text: root.scat_iface = self.text
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Model (optional):'
-            size_hint_x: None
-            width: '140dp'
-        TextInput:
-            text: root.scat_model
-            multiline: False
-            hint_text: 'e.g. e5123'
-            on_text: root.scat_model = self.text
-        Label:
-            text: 'Start magic (optional):'
-            size_hint_x: None
-            width: '190dp'
-        TextInput:
-            text: root.scat_start_magic
-            multiline: False
-            hint_text: 'e.g. 0xffffffff'
-            on_text: root.scat_start_magic = self.text
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Output path:'
-            size_hint_x: None
-            width: '110dp'
-        Label:
-            text: root.live_output_dir
-            text_size: self.size
+            text: 'Log'
+            font_size: '12sp'
+            bold: True
             halign: 'left'
             valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
-        Button:
-            text: 'Select Folder'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('live_dir')
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Button:
-            text: 'Start Live Capture'
-            size_hint_x: None
-            width: '220dp'
-            disabled: root.is_busy or root.is_live_running
-            on_release: root.run_live_generation()
-        Button:
-            text: 'Stop'
-            size_hint_x: None
-            width: '120dp'
-            disabled: not root.is_live_running
-            on_release: root.stop_live_capture()
-
-    # --- Modem Log Analyzer (middle) ---
-    Label:
-        markup: True
-        text: '[b]Modem Log Analyzer (.pcap output)[/b]'
-        size_hint_y: None
-        height: '26dp'
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Dump type:'
-            size_hint_x: None
-            width: '90dp'
-        Spinner:
-            text: root.dump_type
-            values: ['sec', 'qc']
-            size_hint_x: None
-            width: '100dp'
-            on_text: root.dump_type = self.text
-        Label:
-            text: 'Model (optional):'
-            size_hint_x: None
-            width: '140dp'
-        TextInput:
-            text: root.dump_model
-            multiline: False
-            hint_text: 'e.g. e5123'
-            on_text: root.dump_model = self.text
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Dump file:'
-            size_hint_x: None
-            width: '90dp'
-        Label:
-            text: root.dump_path if root.dump_path else '[select modem dump file]'
             text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
+            color: 0.75, 0.85, 1, 1
         Button:
-            text: 'Select File'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('dump')
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Output path:'
-            size_hint_x: None
-            width: '110dp'
-        Label:
-            text: root.dump_output_dir
-            text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
-        Button:
-            text: 'Select Folder'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('dump_dir')
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Button:
-            text: 'Start Analyzer'
-            size_hint_x: None
-            width: '220dp'
-            disabled: root.is_busy or root.is_dump_running or not root.dump_path
-            on_release: root.run_dump_analysis()
-        Button:
-            text: 'Stop'
-            size_hint_x: None
-            width: '120dp'
-            disabled: not root.is_dump_running
-            on_release: root.stop_dump_analysis()
-
-    # --- PCAP → ODS (primeiro) ---
-    Label:
-        markup: True
-        text: '[b]PCAP Analyzer (.ods output)[/b]'
-        size_hint_y: None
-        height: '26dp'
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'PCAP file:'
-            size_hint_x: None
-            width: '60dp'
-        Label:
-            text: root.pcap_path if root.pcap_path else '[select .pcap]'
-            text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
-        Button:
-            text: 'Select PCAP'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('pcap')
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Output path:'
-            size_hint_x: None
-            width: '110dp'
-        Label:
-            text: root.pcap_output_dir
-            text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
-        Button:
-            text: 'Select Folder'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('pcap_dir')
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Name (optional):'
-            size_hint_x: None
-            width: '160dp'
-        TextInput:
-            text: root.output_name
-            multiline: False
-            hint_text: 'e.g. result.ods'
-            on_text: root.output_name = self.text
-        Button:
-            text: 'Generate ODS from PCAP'
-            size_hint_x: None
-            width: '220dp'
-            disabled: root.is_busy or not root.pcap_path
-            on_release: root.run_pcap_generation()
-
-    # --- Security from ODS ---
-    Label:
-        markup: True
-        text: '[b]Security Evaluator (.ods output)[/b]'
-        size_hint_y: None
-        height: '26dp'
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'ODS file:'
-            size_hint_x: None
-            width: '90dp'
-        Label:
-            id: ods_label
-            text: root.ods_path if root.ods_path else '[select .ods]'
-            text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
-        Button:
-            text: 'Select ODS'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('ods')
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Output path:'
-            size_hint_x: None
-            width: '110dp'
-        Label:
-            id: out_label
-            text: root.output_dir
-            text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-            shorten: True
-            shorten_from: 'left'
-        Button:
-            text: 'Select Folder'
-            size_hint_x: None
-            width: '160dp'
-            on_release: root.open_file_chooser('dir')
-
-    # Retransmission window (seconds) for Randomness dedup
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Retransmit window (sec):'
-            size_hint_x: None
-            width: '220dp'
-        TextInput:
-            text: root.security_retx_secs
-            multiline: False
-            input_filter: 'int'
-            hint_text: '10'
-            on_text: root.security_retx_secs = self.text
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Reuse rate max:'
-            size_hint_x: None
-            width: '120dp'
-        TextInput:
-            text: root.tmsi_collision_max
-            multiline: False
-            input_filter: 'float'
-            hint_text: '0.01'
-            on_text: root.tmsi_collision_max = self.text
-        Label:
-            text: 'H_norm min:'
-            size_hint_x: None
-            width: '120dp'
-        TextInput:
-            text: root.tmsi_h_norm_min
-            multiline: False
-            input_filter: 'float'
-            hint_text: '0.99'
-            on_text: root.tmsi_h_norm_min = self.text
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Succ. Hamming p min:'
-            size_hint_x: None
-            width: '180dp'
-        TextInput:
-            text: root.tmsi_succ_hamm_p_min
-            multiline: False
-            input_filter: 'float'
-            hint_text: '0.01'
-            on_text: root.tmsi_succ_hamm_p_min = self.text
-        Label:
-            text: 'Chi2 p min:'
-            size_hint_x: None
-            width: '120dp'
-        TextInput:
-            text: root.tmsi_chi2_p_min
-            multiline: False
-            input_filter: 'float'
-            hint_text: '0.01'
-            on_text: root.tmsi_chi2_p_min = self.text
-
-    BoxLayout:
-        size_hint_y: None
-        height: '30dp'
-        spacing: '6dp'
-        Label:
-            text: 'Name (optional):'
-            size_hint_x: None
-            width: '160dp'
-        TextInput:
-            text: root.security_output_name
-            multiline: False
-            hint_text: 'e.g. security.ods'
-            on_text: root.security_output_name = self.text
-        Button:
-            text: 'Generate Security ODS'
-            size_hint_x: None
-            width: '220dp'
-            disabled: root.is_busy or not root.ods_path
-            on_release: root.run_generation()
-
-    Label:
-        text: 'Log:'
-        size_hint_y: None
-        height: '22dp'
+            text: 'Clear'
+            size_hint: None, None
+            size: '62dp', '20dp'
+            font_size: '11sp'
+            on_release: root.log_text = ''
 
     ScrollView:
         id: log_scroll
         size_hint_y: None
-        height: '180dp'
+        height: '200dp'
         do_scroll_x: False
-        bar_width: '10dp'
+        bar_width: '8dp'
         scroll_type: ['bars', 'content']
-        Label:
+        TextInput:
             id: log_text
             text: root.log_text
-            size_hint_x: 1
+            readonly: True
+            multiline: True
             size_hint_y: None
-            text_size: self.width, None
-            height: self.texture_size[1]
-            halign: 'left'
-            valign: 'top'
-            font_size: '16sp'
-            color: 1, 1, 1, 1
-            canvas.before:
-                Color:
-                    rgba: 0.1, 0.1, 0.1, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
+            height: max(self.minimum_height, log_scroll.height)
+            font_size: '13sp'
+            background_color: 0.07, 0.07, 0.09, 1
+            foreground_color: 0.9, 0.9, 0.9, 1
+            cursor_color: 0.07, 0.07, 0.09, 0
+            padding: [8, 4, 8, 4]
 """
 
 
@@ -557,6 +615,8 @@ class VDSRoot(BoxLayout):
     output_dir = StringProperty(str(Path.cwd().resolve()))
     log_text = StringProperty("")
     is_busy = BooleanProperty(False)
+    _pcap_profile: dict = {}
+    _security_profile: dict = {}
     pcap_path = StringProperty("")
     output_name = StringProperty("")
     pcap_output_dir = StringProperty(str(Path.cwd().resolve()))
@@ -588,6 +648,152 @@ class VDSRoot(BoxLayout):
     is_dump_running = BooleanProperty(False)
     dump_proc = ObjectProperty(None, allownone=True)
     dump_pcap = StringProperty("")
+
+    def _build_checkbox_popup(self, title: str, groups: dict, current_profile, cols: int = 2) -> tuple:
+        """Build a scrollable checkbox popup. Returns (popup, checkboxes_dict)."""
+        content = BoxLayout(orientation='vertical', spacing='4dp', padding='6dp')
+        scroll = ScrollView(do_scroll_x=False)
+        inner = BoxLayout(orientation='vertical', size_hint_y=None, spacing='2dp', padding='2dp')
+        inner.bind(minimum_height=inner.setter('height'))
+
+        checkboxes: dict = {}
+
+        for section_name, entries in groups.items():
+            hdr = Label(
+                text=f'[b]{section_name}[/b]',
+                markup=True,
+                size_hint_y=None,
+                height='28dp',
+                halign='left',
+                valign='middle',
+            )
+            hdr.bind(size=lambda lbl, sz: setattr(lbl, 'text_size', sz))
+            inner.add_widget(hdr)
+
+            grid = GridLayout(cols=cols, size_hint_y=None, row_default_height='28dp',
+                              spacing=('4dp', '2dp'))
+            grid.bind(minimum_height=grid.setter('height'))
+
+            for key_or_keys, label_text in entries:
+                keys = key_or_keys if isinstance(key_or_keys, list) else [key_or_keys]
+                active = all(getattr(current_profile, k, True) for k in keys)
+                cb = CheckBox(active=active, size_hint_x=None, width='28dp')
+                lbl = Label(text=label_text, halign='left', valign='middle', size_hint_x=1)
+                lbl.bind(size=lambda l, s: setattr(l, 'text_size', s))
+                item = BoxLayout(spacing='2dp')
+                item.add_widget(cb)
+                item.add_widget(lbl)
+                grid.add_widget(item)
+                checkboxes[tuple(keys)] = cb
+
+            if len(entries) % cols != 0:
+                for _ in range(cols - (len(entries) % cols)):
+                    grid.add_widget(Label())
+
+            inner.add_widget(grid)
+
+        scroll.add_widget(inner)
+        content.add_widget(scroll)
+
+        btn_row = BoxLayout(size_hint_y=None, height='40dp', spacing='6dp')
+        sel_all_btn   = Button(text='Select All')
+        desel_all_btn = Button(text='Deselect All')
+        ok_btn        = Button(text='OK')
+        cancel_btn    = Button(text='Cancel')
+        btn_row.add_widget(sel_all_btn)
+        btn_row.add_widget(desel_all_btn)
+        btn_row.add_widget(ok_btn)
+        btn_row.add_widget(cancel_btn)
+        content.add_widget(btn_row)
+
+        popup = Popup(title=title, content=content, size_hint=(0.72, 0.88))
+        sel_all_btn.bind(on_release=lambda *_: [setattr(cb, 'active', True) for cb in checkboxes.values()])
+        desel_all_btn.bind(on_release=lambda *_: [setattr(cb, 'active', False) for cb in checkboxes.values()])
+        cancel_btn.bind(on_release=lambda *_: popup.dismiss())
+        return popup, checkboxes, ok_btn
+
+    def open_pcap_selection_menu(self) -> None:
+        """Open the PCAP analysis selection popup (full per-generation extractor list)."""
+        from selection_profile import SelectionProfile, PROFILE_LABELS, PROFILE_GROUPS
+        current = SelectionProfile.from_dict(self._pcap_profile) if self._pcap_profile else SelectionProfile()
+        # Convert PROFILE_GROUPS to (key, label) entry format
+        groups_as_entries = {
+            gen: [(k, PROFILE_LABELS.get(k, k)) for k in keys]
+            for gen, keys in PROFILE_GROUPS.items()
+        }
+        popup, checkboxes, ok_btn = self._build_checkbox_popup(
+            'PCAP Analysis Options', groups_as_entries, current, cols=2
+        )
+
+        def do_ok(_btn):
+            flat: dict = {}
+            for keys_tuple, cb in checkboxes.items():
+                for k in keys_tuple:
+                    flat[k] = cb.active
+            self._pcap_profile = flat
+            popup.dismiss()
+
+        ok_btn.bind(on_release=do_ok)
+        popup.open()
+
+    def open_security_selection_menu(self) -> None:
+        """Open the Security Evaluator options popup (coarse modules + indicators thresholds)."""
+        from selection_profile import SelectionProfile, SECURITY_MENU_GROUPS
+        current = SelectionProfile.from_dict(self._security_profile) if self._security_profile else SelectionProfile()
+        popup, checkboxes, ok_btn = self._build_checkbox_popup(
+            'Security Evaluator Options', SECURITY_MENU_GROUPS, current, cols=2
+        )
+
+        # Inject Parameters section below the scroll, above the buttons
+        content = popup.content
+        # Remove the last child (btn_row) temporarily, add params, re-add
+        btn_row = content.children[0]
+        content.remove_widget(btn_row)
+
+        params_box = BoxLayout(orientation='vertical', size_hint_y=None, spacing='3dp')
+        params_box.bind(minimum_height=params_box.setter('height'))
+
+        param_hdr = Label(text='[b]Evaluation Thresholds[/b]', markup=True,
+                          size_hint_y=None, height='28dp', halign='left', valign='middle')
+        param_hdr.bind(size=lambda l, s: setattr(l, 'text_size', s))
+        params_box.add_widget(param_hdr)
+
+        def _param_row(label_text: str, current_val: str, input_filter: str):
+            row = BoxLayout(size_hint_y=None, height='30dp', spacing='6dp')
+            lbl = Label(text=label_text, size_hint_x=None, width='220dp',
+                        halign='left', valign='middle')
+            lbl.bind(size=lambda l, s: setattr(l, 'text_size', s))
+            ti = TextInput(text=current_val, multiline=False, input_filter=input_filter,
+                           size_hint_x=1)
+            row.add_widget(lbl)
+            row.add_widget(ti)
+            params_box.add_widget(row)
+            return ti
+
+        ti_retx   = _param_row('Retransmit window (sec):', self.security_retx_secs, 'int')
+        ti_coll   = _param_row('Reuse rate max:', self.tmsi_collision_max, 'float')
+        ti_hnorm  = _param_row('H_norm min:', self.tmsi_h_norm_min, 'float')
+        ti_hamm   = _param_row('Succ. Hamming p min:', self.tmsi_succ_hamm_p_min, 'float')
+        ti_chi2   = _param_row('Chi2 p min:', self.tmsi_chi2_p_min, 'float')
+
+        content.add_widget(params_box)
+        content.add_widget(btn_row)
+
+        def do_ok(_btn):
+            flat: dict = {}
+            for keys_tuple, cb in checkboxes.items():
+                for k in keys_tuple:
+                    flat[k] = cb.active
+            self._security_profile = flat
+            self.security_retx_secs    = ti_retx.text
+            self.tmsi_collision_max    = ti_coll.text
+            self.tmsi_h_norm_min       = ti_hnorm.text
+            self.tmsi_succ_hamm_p_min  = ti_hamm.text
+            self.tmsi_chi2_p_min       = ti_chi2.text
+            popup.dismiss()
+
+        ok_btn.bind(on_release=do_ok)
+        popup.open()
 
     def _append_log(self, msg: str) -> None:
         """Append a message to the log area."""
@@ -955,8 +1161,9 @@ class VDSRoot(BoxLayout):
                     th['chi2_p_min'] = v
                 except Exception:
                     pass
+                profile_dict = self._security_profile or None
                 proc = ranvds.start_security_report_nonblocking(
-                    str(ods), output_dir=str(outdir), retransmit_window_seconds=secs_val, tmsi_thresholds=(th or None)
+                    str(ods), output_dir=str(outdir), retransmit_window_seconds=secs_val, tmsi_thresholds=(th or None), profile_dict=profile_dict
                 )
             except Exception:
                 err = traceback.format_exc(limit=5)
@@ -1459,6 +1666,8 @@ class VDSRoot(BoxLayout):
                     name += '.ods'
                 expected = (outdir / name).resolve()
                 args += ['-o', name]
+            if self._pcap_profile:
+                args += ['--profile-json', _gui_json.dumps(self._pcap_profile)]
 
             self._post_log(f"Running: RANVDS {' '.join(args)} (cwd={run_cwd})")
             try:
@@ -1509,7 +1718,6 @@ class VDSApp(App):
         """Build the UI and configure default directories and properties."""
         Builder.load_string(KV)
         self.title = 'RANVDS - Radio Access Network Vulnerability Detection System'
-        # self.icon = '/home/redecelular/Desktop/VDS Mestrado/icon.png'
         # Try to locate and assign the application icon from system or source paths.
         try:
             icon_path = _find_app_icon()
@@ -1521,13 +1729,13 @@ class VDSApp(App):
             except Exception:
                 # Non-fatal if the window backend does not support custom icons
                 pass
-        # Ensure the window is big enough and maximized so all sections are visible
+        # Set a comfortable initial window size for the tabbed layout
         try:
-            Window.minimum_width = 1100
-            Window.minimum_height = 950
+            Window.minimum_width = 860
+            Window.minimum_height = 680
+            Window.size = (960, 740)
         except Exception:
-            # Fallback to a sensible size if maximize is not supported
-            Window.size = (1100, 950)
+            Window.size = (960, 740)
         # Create default folders under a writable data directory
         # Priority:
         # 1) VDS_DATA_DIR (explicit override)

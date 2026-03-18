@@ -89,6 +89,22 @@ class IdentityRecord:
     domain: str = ""
 
 
+@dataclass
+class SuciRegistrationStats:
+    """
+    Counts of completed 5G Registration procedures and SUCI scheme types.
+
+    Attributes:
+        completed (int): Number of fully completed Registration triplets (Request→Accept→Complete).
+        id_type_counts (Dict[str, int]): Count per ID Type label (e.g. "SUCI", "5G-GUTI").
+        scheme_counts (Dict[str, int]): Count per Scheme Type label among SUCI registrations.
+    """
+
+    completed: int = 0
+    id_type_counts: Dict[str, int] = field(default_factory=dict)
+    scheme_counts: Dict[str, int] = field(default_factory=dict)
+
+
 # Global counters for LUR pairing discards (by Randomness Summary label)
 # e.g., "2G CS (TMSI)": int, "3G NAS CS (TMSI)": int
 _PAIRING_DISCARDS_BY_LABEL: Dict[str, int] = {}
@@ -243,7 +259,7 @@ def compute_crypto_summary(
     return GenerationSummary(name=name, changes=changes, counts=counts, weak_in_use=weak)
 
 
-def build_security_ods(output_path: Path, summaries: List[GenerationSummary], identities: List[IdentityRecord] | None = None, paging_stats: Dict[str, Dict[str, int]] | None = None, ts_margin_seconds: float = 0.0, tmsi_thresholds: Dict[str, float] | None = None) -> Path:
+def build_security_ods(output_path: Path, summaries: List[GenerationSummary], identities: List[IdentityRecord] | None = None, paging_stats: Dict[str, Dict[str, int]] | None = None, ts_margin_seconds: float = 0.0, tmsi_thresholds: Dict[str, float] | None = None, suci_stats: "SuciRegistrationStats | None" = None, vops_stats: "VoPSStats | None" = None, ue_cap_security_stats: "UECapSecurityStats | None" = None, sip_ipsec_stats: "SipIpsecStats | None" = None) -> Path:
     """
     Create an ODS file with a Crypto Summary sheet showing, per generation.
 
@@ -260,12 +276,15 @@ def build_security_ods(output_path: Path, summaries: List[GenerationSummary], id
         paging_stats (Dict[str, Dict[str, int]] | None): Paging statistics (optional).
         ts_margin_seconds (float): Timestamp margin in seconds (optional).
         tmsi_thresholds (Dict[str, float] | None): TMSI thresholds (optional).
+        suci_stats (SuciRegistrationStats | None): SUCI registration stats (optional).
+        vops_stats (VoPSStats | None): VoPS support stats (optional).
+        ue_cap_security_stats (UECapSecurityStats | None): UE Cap Security stats (optional).
 
     Returns:
         Path: Output file path.
     """
     import table_builder as _tb
-    return _tb.build_security_ods(output_path, summaries, identities=identities, paging_stats=paging_stats, ts_margin_seconds=ts_margin_seconds, tmsi_thresholds=tmsi_thresholds)
+    return _tb.build_security_ods(output_path, summaries, identities=identities, paging_stats=paging_stats, ts_margin_seconds=ts_margin_seconds, tmsi_thresholds=tmsi_thresholds, suci_stats=suci_stats, vops_stats=vops_stats, ue_cap_security_stats=ue_cap_security_stats, sip_ipsec_stats=sip_ipsec_stats)
 
 
 # -----------------------------
@@ -322,6 +341,10 @@ def write_crypto_checker_ods(
     paging_stats: Dict[str, Dict[str, int]] | None = None,
     ts_margin_seconds: float = 0.0,
     tmsi_thresholds: Dict[str, float] | None = None,
+    suci_stats: "SuciRegistrationStats | None" = None,
+    vops_stats: "VoPSStats | None" = None,
+    ue_cap_security_stats: "UECapSecurityStats | None" = None,
+    sip_ipsec_stats: "SipIpsecStats | None" = None,
 ) -> Path:
     """
     Write the security checker ODS from sequences per generation.
@@ -344,6 +367,8 @@ def write_crypto_checker_ods(
         paging_stats (Dict[str, Dict[str, int]] | None): Paging statistics (optional).
         ts_margin_seconds (float): Timestamp margin in seconds (optional).
         tmsi_thresholds (Dict[str, float] | None): TMSI thresholds (optional).
+        suci_stats (SuciRegistrationStats | None): SUCI registration stats (optional).
+        vops_stats (VoPSStats | None): VoPS support stats (optional).
 
     Returns:
         Path: Output file path.
@@ -363,10 +388,16 @@ def write_crypto_checker_ods(
         "4G RRC INT": WEAK_4G,
         "4G NAS ENC": WEAK_4G,
         "4G NAS INT": WEAK_4G,
+        "4G UP ENC":  WEAK_4G,
+        "4G UP INT":  WEAK_4G,
         "5G RRC ENC": WEAK_5G,
         "5G RRC INT": WEAK_5G,
         "5G NAS ENC": WEAK_5G,
         "5G NAS INT": WEAK_5G,
+        "5G SA UP ENC":  WEAK_5G,
+        "5G SA UP INT":  WEAK_5G,
+        "5G NSA UP ENC": WEAK_5G,
+        "5G NSA UP INT": WEAK_5G,
     }
 
     summaries: List[GenerationSummary] = []
@@ -382,7 +413,7 @@ def write_crypto_checker_ods(
     while out_path.exists():
         out_path = output_dir / f"{filename_prefix}_Security_{idx}.ods"
         idx += 1
-    return build_security_ods(out_path, summaries, identities=identities, paging_stats=paging_stats, ts_margin_seconds=ts_margin_seconds, tmsi_thresholds=tmsi_thresholds)
+    return build_security_ods(out_path, summaries, identities=identities, paging_stats=paging_stats, ts_margin_seconds=ts_margin_seconds, tmsi_thresholds=tmsi_thresholds, suci_stats=suci_stats, vops_stats=vops_stats, ue_cap_security_stats=ue_cap_security_stats, sip_ipsec_stats=sip_ipsec_stats)
 
 
 # -----------------------------
@@ -563,6 +594,61 @@ def extract_sequences_from_ods(ods_path: Path, exclude_tabs: List[str] | None = 
                 sequences[f"{title} CS"] = seq_cs
             if seq_ps:
                 sequences[f"{title} PS"] = seq_ps
+            continue
+
+        # Split 4G RRC ENC/INT: SecurityModeCommand → RRC sequence; RRCConnectionReconfiguration → UP sequence
+        if title in ("4G RRC ENC", "4G RRC INT"):
+            up_title = "4G UP ENC" if title.endswith("ENC") else "4G UP INT"
+            msg_idx = headers.index("Message") if "Message" in headers else None
+            seq_4g_rrc: List[str] = []
+            seq_4g_up:  List[str] = []
+            for r in rows[1:]:
+                cells = r.getElementsByType(TableCell)
+                if not cells:
+                    continue
+                val  = _get_cell_text(cells[col_idx]) if col_idx < len(cells) else ""
+                used = _interpret_used_for_tab(title, val)
+                msg  = _get_cell_text(cells[msg_idx]).strip() if (msg_idx is not None and msg_idx < len(cells)) else ""
+                if msg == "rrcConnectionReconfiguration":
+                    seq_4g_up.append(used)
+                else:
+                    seq_4g_rrc.append(used)
+            if seq_4g_rrc:
+                sequences[title] = seq_4g_rrc
+            if seq_4g_up:
+                sequences[up_title] = seq_4g_up
+            continue
+
+        # Split 5G RRC ENC/INT:
+        #   securityModeCommand (NR RRC)        → 5G RRC sequence (SA RRC plane)
+        #   rrcReconfiguration  (NR RRC)        → 5G SA UP sequence
+        #   rrcConnectionReconfiguration (LTE)  → 5G NSA UP sequence
+        if title in ("5G RRC ENC", "5G RRC INT"):
+            sa_up_title  = "5G SA UP ENC"  if title.endswith("ENC") else "5G SA UP INT"
+            nsa_up_title = "5G NSA UP ENC" if title.endswith("ENC") else "5G NSA UP INT"
+            msg_idx = headers.index("Message") if "Message" in headers else None
+            seq_5g_rrc:    List[str] = []
+            seq_5g_sa_up:  List[str] = []
+            seq_5g_nsa_up: List[str] = []
+            for r in rows[1:]:
+                cells = r.getElementsByType(TableCell)
+                if not cells:
+                    continue
+                val  = _get_cell_text(cells[col_idx]) if col_idx < len(cells) else ""
+                used = _interpret_used_for_tab(title, val)
+                msg  = _get_cell_text(cells[msg_idx]).strip() if (msg_idx is not None and msg_idx < len(cells)) else ""
+                if msg == "rrcReconfiguration":
+                    seq_5g_sa_up.append(used)
+                elif msg == "rrcConnectionReconfiguration":
+                    seq_5g_nsa_up.append(used)
+                else:
+                    seq_5g_rrc.append(used)
+            if seq_5g_rrc:
+                sequences[title] = seq_5g_rrc
+            if seq_5g_sa_up:
+                sequences[sa_up_title] = seq_5g_sa_up
+            if seq_5g_nsa_up:
+                sequences[nsa_up_title] = seq_5g_nsa_up
             continue
 
         # extract sequence from data rows (default behavior)
@@ -1230,6 +1316,547 @@ def extract_paging_from_ods(ods_path: Path) -> Dict[str, Dict[str, int]]:
                         if is_imsi_value(val):
                             stats[gen]["imsi_ids"] += 1
 
+    return stats
+
+
+# -----------------------------
+# 5G SUCI registration analysis
+# -----------------------------
+
+def count_suci_registrations(
+    suci_data: Dict[str, List[Dict[str, Any]]],
+    translations_dict: Dict[str, Any],
+) -> "SuciRegistrationStats":
+    """
+    Count completed 5G Registration triplets (Request→Accept→Complete) from in-memory data.
+
+    For each completed triplet the ID Type of the Registration Request is counted.
+    When the ID Type is SUCI, the Scheme Type is also counted.
+
+    Args:
+        suci_data: Result of extract_5g_nas_suci (frame → list of packet records).
+        translations_dict: dict(TRANSLATIONS.items()) used to invert raw→label lookups.
+
+    Returns:
+        SuciRegistrationStats with counts of completed registrations, ID types and schemes.
+    """
+    stats = SuciRegistrationStats()
+    if not suci_data:
+        return stats
+
+    records: List[Dict[str, Any]] = []
+    for recs in suci_data.values():
+        records.extend(recs)
+    records.sort(key=lambda r: (r.get("Frame") or 0))
+
+    def _invert(field_name: Optional[str]) -> Dict[str, str]:
+        if not field_name:
+            return {}
+        section = translations_dict.get(field_name, {})
+        try:
+            return {v: k for k, v in section.items()}
+        except Exception:
+            return {}
+
+    msg_field = next((r.get("MessageField") for r in records if r.get("MessageField")), None)
+    id_type_field = next((r.get("ID Type Field") for r in records if r.get("ID Type Field")), None)
+    scheme_field = next((r.get("Scheme Type Field") for r in records if r.get("Scheme Type Field")), None)
+
+    msg_inv = _invert(msg_field)
+    id_inv = _invert(id_type_field)
+    scheme_inv = _invert(scheme_field)
+
+    REQ_LABEL = "Registration request"
+    ACPT_LABEL = "Registration accept"
+    COMP_LABEL = "Registration complete"
+    SUCI_LABEL = "SUCI"
+
+    def _classify(raw_msg: str) -> Optional[str]:
+        label = msg_inv.get(raw_msg, "")
+        if label == REQ_LABEL:
+            return "REQ"
+        if label == ACPT_LABEL:
+            return "ACPT"
+        if label == COMP_LABEL:
+            return "COMP"
+        return None
+
+    def _id_type(rec: Dict[str, Any]) -> str:
+        return id_inv.get(rec.get("ID Type", ""), rec.get("ID Type", "") or "")
+
+    def _scheme(rec: Dict[str, Any]) -> str:
+        raw = rec.get("Scheme Type", "") or ""
+        if not raw:
+            return ""
+        label = scheme_inv.get(raw)
+        if label is None:
+            try:
+                label = scheme_inv.get(hex(int(raw, 0)))
+            except (ValueError, TypeError):
+                pass
+        return label or raw
+
+    pending_req: Optional[Dict[str, Any]] = None
+    pending_acpt_req: Optional[Dict[str, Any]] = None
+
+    for rec in records:
+        cls = _classify(rec.get("Message", "") or "")
+        if cls == "REQ":
+            pending_req = rec
+            pending_acpt_req = None
+        elif cls == "ACPT":
+            if pending_req is not None:
+                pending_acpt_req = pending_req
+                pending_req = None
+        elif cls == "COMP":
+            if pending_acpt_req is not None:
+                stats.completed += 1
+                id_type = _id_type(pending_acpt_req)
+                stats.id_type_counts[id_type] = stats.id_type_counts.get(id_type, 0) + 1
+                if SUCI_LABEL in id_type:
+                    scheme = _scheme(pending_acpt_req)
+                    if scheme:
+                        stats.scheme_counts[scheme] = stats.scheme_counts.get(scheme, 0) + 1
+                pending_acpt_req = None
+
+    return stats
+
+
+def extract_suci_stats_from_ods(ods_path: Path) -> "SuciRegistrationStats":
+    """
+    Compute SuciRegistrationStats by reading the '5G SUCI' tab of an existing ODS.
+
+    The tab must contain columns 'Message', 'ID Type', and 'Scheme Type' with
+    already-interpreted (human-readable) values.
+
+    Args:
+        ods_path: Path to the main ODS file.
+
+    Returns:
+        SuciRegistrationStats with counts of completed registrations, ID types and schemes.
+    """
+    stats = SuciRegistrationStats()
+    ods = load_ods(str(ods_path))
+
+    suci_table = None
+    for table in ods.spreadsheet.getElementsByType(Table):
+        if (table.getAttribute("name") or "").strip() == "5G SUCI":
+            suci_table = table
+            break
+    if suci_table is None:
+        return stats
+
+    rows = suci_table.getElementsByType(TableRow)
+    if not rows:
+        return stats
+
+    headers = [_get_cell_text(c) for c in rows[0].getElementsByType(TableCell)]
+    if not headers:
+        return stats
+
+    msg_idx = headers.index("Message") if "Message" in headers else None
+    id_idx = headers.index("ID Type") if "ID Type" in headers else None
+    scheme_idx = headers.index("Scheme Type") if "Scheme Type" in headers else None
+
+    if msg_idx is None:
+        return stats
+
+    REQ_LABEL = "Registration request"
+    ACPT_LABEL = "Registration accept"
+    COMP_LABEL = "Registration complete"
+    SUCI_LABEL = "SUCI"
+
+    def _cell(cells, idx: Optional[int]) -> str:
+        if idx is None or idx >= len(cells):
+            return ""
+        return _get_cell_text(cells[idx])
+
+    pending_req: Optional[tuple] = None
+    pending_acpt_req: Optional[tuple] = None
+
+    for row in rows[1:]:
+        cells = row.getElementsByType(TableCell)
+        if not cells:
+            continue
+        msg = _cell(cells, msg_idx)
+        if msg == REQ_LABEL:
+            id_type = _cell(cells, id_idx)
+            scheme = _cell(cells, scheme_idx)
+            pending_req = (id_type, scheme)
+            pending_acpt_req = None
+        elif msg == ACPT_LABEL:
+            if pending_req is not None:
+                pending_acpt_req = pending_req
+                pending_req = None
+        elif msg == COMP_LABEL:
+            if pending_acpt_req is not None:
+                stats.completed += 1
+                id_type, scheme = pending_acpt_req
+                stats.id_type_counts[id_type] = stats.id_type_counts.get(id_type, 0) + 1
+                if SUCI_LABEL in id_type:
+                    if scheme:
+                        stats.scheme_counts[scheme] = stats.scheme_counts.get(scheme, 0) + 1
+                pending_acpt_req = None
+
+    return stats
+
+
+# -----------------------------
+# VoPS (Voice over PS) analysis
+# -----------------------------
+
+@dataclass
+class VoPSQuintupletStats:
+    """
+    Per-(MCC, MNC, TAC, PCI, ARFCN) VoPS statistics for a single generation.
+
+    Attributes:
+        generation (str): '4G' or '5G'.
+        mcc (str): Mobile Country Code.
+        mnc (str): Mobile Network Code.
+        tac (str): Tracking Area Code.
+        pci (str): Physical Cell ID.
+        arfcn (str): Absolute Radio Frequency Channel Number.
+        supported (int): Count of messages with VoPS = Supported.
+        not_supported (int): Count of messages with VoPS = Not Supported.
+    """
+
+    generation: str
+    mcc: str
+    mnc: str
+    tac: str
+    pci: str
+    arfcn: str
+    supported: int = 0
+    not_supported: int = 0
+
+    @property
+    def status(self) -> str:
+        """Return 'Pass', 'Fail', or 'N/A' for this quintuplet."""
+        if self.supported == 0 and self.not_supported == 0:
+            return "N/A"
+        return "Fail" if self.not_supported > 0 else "Pass"
+
+
+@dataclass
+class VoPSStats:
+    """
+    Counts of VoPS support per generation from NAS Attach/Registration Accept messages.
+
+    Attributes:
+        supported_4g (int): Count of 4G Attach Accept messages with VoPS = Supported.
+        not_supported_4g (int): Count of 4G Attach Accept messages with VoPS = Not Supported.
+        supported_5g (int): Count of 5G Registration Accept messages with VoPS = Supported.
+        not_supported_5g (int): Count of 5G Registration Accept messages with VoPS = Not Supported.
+        quintuplets (List[VoPSQuintupletStats]): Per-(generation, MCC, MNC, TAC, PCI, ARFCN) breakdown.
+    """
+
+    supported_4g: int = 0
+    not_supported_4g: int = 0
+    supported_5g: int = 0
+    not_supported_5g: int = 0
+    quintuplets: List[VoPSQuintupletStats] = field(default_factory=list)
+
+
+def extract_vops_from_ods(ods_path: Path) -> "VoPSStats":
+    """
+    Compute VoPSStats by reading the '4G VoPS' and '5G VoPS' tabs of an existing ODS.
+
+    Builds both overall per-generation counts and a per-(MCC, MNC, TAC, PCI, ARFCN)
+    quintuplet breakdown. A quintuplet is marked Fail if any observation has
+    VoPS = Not Supported.
+
+    Args:
+        ods_path: Path to the main ODS file.
+
+    Returns:
+        VoPSStats with overall counts and per-quintuplet breakdown.
+    """
+    stats = VoPSStats()
+    ods = load_ods(str(ods_path))
+
+    tab_map: Dict[str, Any] = {}
+    for table in ods.spreadsheet.getElementsByType(Table):
+        name = (table.getAttribute("name") or "").strip()
+        if name in ("4G VoPS", "5G VoPS"):
+            tab_map[name] = table
+
+    if not tab_map:
+        return stats
+
+    def _cell(cells, idx: Optional[int]) -> str:
+        if idx is None or idx >= len(cells):
+            return ""
+        return _get_cell_text(cells[idx])
+
+    # quintuplet_counts: (gen, mcc, mnc, tac, pci, arfcn) -> [supported, not_supported]
+    quintuplet_counts: Dict[Tuple[str, str, str, str, str, str], List[int]] = {}
+
+    for tab_name, expected_gen in (("4G VoPS", "4G"), ("5G VoPS", "5G")):
+        table = tab_map.get(tab_name)
+        if table is None:
+            continue
+        rows = table.getElementsByType(TableRow)
+        if not rows:
+            continue
+        headers = [_get_cell_text(c) for c in rows[0].getElementsByType(TableCell)]
+        vops_idx  = headers.index("VoPS")  if "VoPS"  in headers else None
+        mcc_idx   = headers.index("MCC")   if "MCC"   in headers else None
+        mnc_idx   = headers.index("MNC")   if "MNC"   in headers else None
+        tac_idx   = headers.index("TAC")   if "TAC"   in headers else None
+        pci_idx   = headers.index("PCI")   if "PCI"   in headers else None
+        arfcn_idx = headers.index("ARFCN") if "ARFCN" in headers else None
+        if vops_idx is None:
+            continue
+        for row in rows[1:]:
+            cells = row.getElementsByType(TableCell)
+            if not cells:
+                continue
+            vops = _cell(cells, vops_idx).strip()
+            if not vops:
+                continue
+            supported = vops.lower() == "supported"
+            if expected_gen == "4G":
+                if supported:
+                    stats.supported_4g += 1
+                else:
+                    stats.not_supported_4g += 1
+            else:
+                if supported:
+                    stats.supported_5g += 1
+                else:
+                    stats.not_supported_5g += 1
+
+            mcc   = _cell(cells, mcc_idx).strip()   if mcc_idx   is not None else ""
+            mnc   = _cell(cells, mnc_idx).strip()   if mnc_idx   is not None else ""
+            tac   = _cell(cells, tac_idx).strip()   if tac_idx   is not None else ""
+            pci   = _cell(cells, pci_idx).strip()   if pci_idx   is not None else ""
+            arfcn = _cell(cells, arfcn_idx).strip() if arfcn_idx is not None else ""
+            key = (expected_gen, mcc, mnc, tac, pci, arfcn)
+            if key not in quintuplet_counts:
+                quintuplet_counts[key] = [0, 0]
+            if supported:
+                quintuplet_counts[key][0] += 1
+            else:
+                quintuplet_counts[key][1] += 1
+
+    for (gen, mcc, mnc, tac, pci, arfcn), (sup, not_sup) in quintuplet_counts.items():
+        stats.quintuplets.append(VoPSQuintupletStats(
+            generation=gen, mcc=mcc, mnc=mnc, tac=tac, pci=pci, arfcn=arfcn,
+            supported=sup, not_supported=not_sup,
+        ))
+
+    stats.quintuplets.sort(key=lambda q: (q.generation, q.mcc, q.mnc, q.tac, q.pci, q.arfcn))
+    return stats
+
+
+# -----------------------------------------
+# SIP IPSec security analysis
+# -----------------------------------------
+
+@dataclass
+class SipIpsecStats:
+    """
+    Counts of SIP 401 (Unauthorized) messages evaluated for IPSec EAlg usage.
+
+    A response is considered protected when sip.sec_mechanism.ealg is non-empty
+    and not 'null' / 'Null'.  Any 401 without a valid ealg is a failure.
+
+    Attributes:
+        pass_count (int): 401 messages that carried a valid (non-null) EAlg.
+        fail_count (int): 401 messages where EAlg was null or absent.
+    """
+    pass_count: int = 0
+    fail_count: int = 0
+
+    @property
+    def status(self) -> str:
+        """Return 'Pass', 'Fail', or 'N/A'."""
+        if self.pass_count == 0 and self.fail_count == 0:
+            return "N/A"
+        return "Fail" if self.fail_count > 0 else "Pass"
+
+
+def extract_sip_ipsec_from_ods(ods_path: Path) -> "SipIpsecStats":
+    """
+    Compute SipIpsecStats by reading the 'SIP' tab of an existing ODS.
+
+    A row is a candidate when its 'Status Code' column equals 'Unauthorized'
+    (the translated value of 401) or the raw string '401'.  The 'EAlg' column
+    is then checked: 'Null', 'null', or an empty cell → fail; any other
+    non-empty value → pass.
+
+    Args:
+        ods_path: Path to the main ODS file.
+
+    Returns:
+        SipIpsecStats with pass/fail counts.
+    """
+    stats = SipIpsecStats()
+    ods = load_ods(str(ods_path))
+
+    sip_table = None
+    for table in ods.spreadsheet.getElementsByType(Table):
+        name = (table.getAttribute("name") or "").strip()
+        if name == "SIP":
+            sip_table = table
+            break
+
+    if sip_table is None:
+        return stats
+
+    rows = sip_table.getElementsByType(TableRow)
+    if not rows:
+        return stats
+
+    headers = [_get_cell_text(c) for c in rows[0].getElementsByType(TableCell)]
+    status_idx = headers.index("Status Code") if "Status Code" in headers else None
+    ealg_idx   = headers.index("EAlg")        if "EAlg"        in headers else None
+
+    if status_idx is None:
+        return stats
+
+    def _cell(cells, idx: Optional[int]) -> str:
+        if idx is None or idx >= len(cells):
+            return ""
+        return _get_cell_text(cells[idx])
+
+    _NULL_EALG = {"null", "Null", "NULL", ""}
+
+    for row in rows[1:]:
+        cells = row.getElementsByType(TableCell)
+        if not cells:
+            continue
+        status = _cell(cells, status_idx).strip()
+        if status.lower() not in ("unauthorized", "401"):
+            continue
+        ealg = _cell(cells, ealg_idx).strip() if ealg_idx is not None else ""
+        if ealg in _NULL_EALG:
+            stats.fail_count += 1
+        else:
+            stats.pass_count += 1
+
+    return stats
+
+
+# -----------------------------------------
+# UE Capability Security check analysis
+# -----------------------------------------
+
+@dataclass
+class UECapSecurityStats:
+    """
+    Counts of UECapabilityInformation messages sent before / after SecurityModeComplete.
+
+    Attributes:
+        before_4g (int):  4G messages sent before SecurityModeComplete (unencrypted — flagged).
+        after_4g (int):   4G messages sent after SecurityModeComplete (encrypted — OK).
+        unknown_4g (int): 4G messages with no SecurityModeComplete within the search window.
+        before_5g (int):  5G messages sent before SecurityModeComplete (unencrypted — flagged).
+        after_5g (int):   5G messages sent after SecurityModeComplete (encrypted — OK).
+        unknown_5g (int): 5G messages with no SecurityModeComplete within the search window.
+    """
+    before_4g:  int = 0
+    after_4g:   int = 0
+    unknown_4g: int = 0
+    before_5g:  int = 0
+    after_5g:   int = 0
+    unknown_5g: int = 0
+
+
+def extract_ue_cap_security_from_ods(
+    ods_path: Path,
+    frame_window: int = 15,
+) -> "UECapSecurityStats":
+    """
+    Compute UECapSecurityStats by reading the '4G UE Cap Security' and
+    '5G UE Cap Security' tabs of an existing ODS.
+
+    Each tab contains raw UECapabilityInformation and SecurityModeComplete
+    message records (Frame, MsgType). This function performs the temporal
+    analysis: for each UECapabilityInformation at frame F, it finds the
+    nearest SecurityModeComplete within ±frame_window frames and classifies
+    the result as Before, After, or Unknown.
+
+    Args:
+        ods_path: Path to the main ODS file.
+        frame_window: Maximum frame distance for SecurityModeComplete lookup.
+
+    Returns:
+        UECapSecurityStats with Before / After / Unknown counts per generation.
+    """
+    stats = UECapSecurityStats()
+    ods = load_ods(str(ods_path))
+
+    tab_map: Dict[str, Any] = {}
+    for table in ods.spreadsheet.getElementsByType(Table):
+        name = (table.getAttribute("name") or "").strip()
+        if name in ("4G UE Cap Security", "5G UE Cap Security"):
+            tab_map[name] = table
+
+    if not tab_map:
+        return stats
+
+    def _cell(cells, idx: Optional[int]) -> str:
+        if idx is None or idx >= len(cells):
+            return ""
+        return _get_cell_text(cells[idx])
+
+    for tab_name, gen in (("4G UE Cap Security", "4G"), ("5G UE Cap Security", "5G")):
+        table = tab_map.get(tab_name)
+        if table is None:
+            continue
+        rows = table.getElementsByType(TableRow)
+        if not rows:
+            continue
+        headers = [_get_cell_text(c) for c in rows[0].getElementsByType(TableCell)]
+        frame_idx   = headers.index("Frame")   if "Frame"   in headers else None
+        msg_idx     = headers.index("Message") if "Message" in headers else None
+        if frame_idx is None or msg_idx is None:
+            continue
+
+        ue_cap_frames: List[int] = []
+        smc_frames:    List[int] = []
+
+        for row in rows[1:]:
+            cells = row.getElementsByType(TableCell)
+            if not cells:
+                continue
+            frame_str = _cell(cells, frame_idx).strip()
+            msgtype   = _cell(cells, msg_idx).strip()
+            if not frame_str or not msgtype:
+                continue
+            try:
+                frame = int(frame_str)
+            except ValueError:
+                continue
+            if msgtype == "ueCapabilityInformation":
+                ue_cap_frames.append(frame)
+            elif msgtype == "securityModeComplete":
+                smc_frames.append(frame)
+
+        sorted_smc = sorted(smc_frames)
+        for f in ue_cap_frames:
+            candidates = [sf for sf in sorted_smc if abs(sf - f) <= frame_window]
+            if not candidates:
+                security = "Unknown"
+            else:
+                nearest = min(candidates, key=lambda sf: abs(sf - f))
+                security = "After" if nearest < f else "Before"
+            if gen == "4G":
+                if security == "Before":
+                    stats.before_4g += 1
+                elif security == "After":
+                    stats.after_4g += 1
+                else:
+                    stats.unknown_4g += 1
+            else:
+                if security == "Before":
+                    stats.before_5g += 1
+                elif security == "After":
+                    stats.after_5g += 1
+                else:
+                    stats.unknown_5g += 1
     return stats
 
 

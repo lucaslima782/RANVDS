@@ -2623,3 +2623,530 @@ def extract_5g_paging(
             "ID": ng_5g_id,
         })
     return results
+
+# SUCI Usage
+
+def extract_5g_nas_suci(
+    packets: List[Dict[str, Any]],
+    nrnas_fields: Dict[str, str],
+    misc_fields: Dict[str, str],
+    translations_cfg: configparser.ConfigParser
+) -> DefaultDict[str, List[Dict[str, str]]]:
+    """
+    Extract 5G (NR NAS) SUCI protection scheme from Registration messages.
+
+    Supports Registration Request/Accept/Complete.
+
+    Args:
+        packets: List of packet dicts.
+        nrnas_fields: 5G NAS field mapping.
+        misc_fields: Miscellaneous field mapping.
+        translations_cfg: Translations for field values.
+
+    Returns:
+        DefaultDict[str, List[Dict[str, str]]]: Map of ID → list of extracted records.
+    """
+    results = defaultdict(list)
+    # MISC headers
+    ts_field = misc_fields.get("Timestamp")
+    frame_field = misc_fields.get("Frame")
+    gsmtap_version_field_v3 = misc_fields.get("VersionV3")
+    nas_sub_type_field = misc_fields.get("SubTypeV3")
+    gsmtap_payload_field = misc_fields.get("PayloadV3")
+    gsmtap_arfcn_field = misc_fields.get("ARFCNV3")
+    # 5G NAS headers
+    mobileid_type_field = nrnas_fields.get("MobileIDType")
+    nas_msg_type_field = nrnas_fields.get("NASMsgType")
+    if nas_msg_type_field is not None:
+        nas_msg_type_RegReq_value = translations_cfg.get(nas_msg_type_field,"Registration request")
+        nas_msg_type_RegAcpt_value = translations_cfg.get(nas_msg_type_field,"Registration accept")
+        nas_msg_type_RegComp_value = translations_cfg.get(nas_msg_type_field,"Registration complete")
+    mcc_field_SUCI = nrnas_fields.get("MCC_5G_SUCI")
+    mnc_field_SUCI = nrnas_fields.get("MNC_5G_SUCI")
+    mcc_field_GUTI = nrnas_fields.get("MCC_5G_GUAMI")
+    mnc_field_GUTI = nrnas_fields.get("MNC_5G_GUAMI")
+    nas_suci_schemeID = nrnas_fields.get("SUCI_SCHEME_ID")
+    for pkt in packets:
+        if gsmtap_payload_field is not None:
+            gsmtap_type_field_values = translations_cfg.get(gsmtap_payload_field,"NR NAS")
+        # 5G NAS filter
+        if pkt["fields"].get(gsmtap_payload_field) != gsmtap_type_field_values:
+            continue
+        # NAS Registration Request filter
+        if pkt["fields"].get(nas_msg_type_field) not in [nas_msg_type_RegReq_value,nas_msg_type_RegAcpt_value,nas_msg_type_RegComp_value]:
+            continue
+        ts = pkt["fields"].get(ts_field)
+        frame = int(pkt["fields"].get(frame_field))
+        version = pkt["fields"].get(gsmtap_version_field_v3)
+        payload = pkt["fields"].get(gsmtap_payload_field)
+        sub_type = pkt["fields"].get(nas_sub_type_field)
+        mcc = pkt["fields"].get(mcc_field_SUCI) or pkt["fields"].get(mcc_field_GUTI)
+        mnc = pkt["fields"].get(mnc_field_SUCI) or pkt["fields"].get(mnc_field_GUTI)
+        message = pkt["fields"].get(nas_msg_type_field)
+        arfcn = pkt["fields"].get(gsmtap_arfcn_field)
+        idtype = pkt["fields"].get(mobileid_type_field)
+        scheme = pkt["fields"].get(nas_suci_schemeID)
+
+        results[frame].append({
+                "Timestamp": ts,
+                "Frame": frame,
+                "Version": version,
+                "PayloadField": gsmtap_payload_field,
+                "Payload": payload,
+                "SubTypeField": nas_sub_type_field,
+                "SubType": sub_type,
+                "MCC": mcc,
+                "MNC": mnc,
+                "MessageField": nas_msg_type_field,
+                "Message": message,
+                "ARFCN": arfcn,
+                "ID Type Field": mobileid_type_field,
+                "ID Type": idtype,
+                "Scheme Type Field": nas_suci_schemeID,
+                "Scheme Type": scheme
+            })
+    return results
+
+
+# VoPS (Voice over PS) support indicator
+
+def extract_4g_nas_vops(
+    packets: List[Dict[str, Any]],
+    ltenas_fields: Dict[str, str],
+    lterrc_fields: Dict[str, str],
+    misc_fields: Dict[str, str],
+    translations_cfg: configparser.ConfigParser,
+) -> DefaultDict[str, List[Dict[str, str]]]:
+    """
+    Extract 4G IMS VoPS support from LTE NAS Attach Accept messages.
+
+    Reads the nas-eps.emm.ims_vops field. ARFCN and PCI are enriched from
+    the nearest preceding RRCConnectionSetup message (lower frame number).
+
+    Args:
+        packets: List of packet dicts.
+        ltenas_fields: LTE NAS field mapping.
+        lterrc_fields: LTE RRC field mapping (for RRCConnectionSetup lookup).
+        misc_fields: Miscellaneous field mapping.
+        translations_cfg: Translations for field values.
+
+    Returns:
+        DefaultDict keyed by frame number; each value is a list of extracted records.
+    """
+    results = defaultdict(list)
+    ts_field = misc_fields.get("Timestamp")
+    frame_field = misc_fields.get("Frame")
+    mcc_field = ltenas_fields.get("MCC_4G_TAI")
+    mnc_field = ltenas_fields.get("MNC_4G_TAI")
+    tac_field = ltenas_fields.get("TAC_4G")
+    nas_msg_field = ltenas_fields.get("NASMsgType")
+    vops_field = ltenas_fields.get("IMS_VOPS")
+    attach_accept_value = translations_cfg.get(nas_msg_field, "Attach Accept") if nas_msg_field else None
+
+    # RRCConnectionSetup lookup setup
+    rrc_message_field = lterrc_fields.get("C1Message")
+    rrc_setup_value = None
+    if rrc_message_field:
+        try:
+            rrc_setup_value = translations_cfg.get(rrc_message_field + "_DL-CCCH", "rrcConnectionSetup")
+        except Exception:
+            pass
+    sorted_packets = sorted(packets, key=lambda p: int(p["fields"].get(frame_field, 0)))
+
+    for pkt in packets:
+        fields = pkt["fields"]
+        version = fields.get(misc_fields.get("Version")) or fields.get(misc_fields.get("VersionV3"))
+        if version == "3":
+            payload_field = misc_fields.get("PayloadV3")
+            sub_type_field = misc_fields.get("SubTypeV3")
+        else:
+            payload_field = misc_fields.get("Payload")
+            sub_type_field = misc_fields.get("SubType2")
+
+        if not (nas_msg_field and attach_accept_value and vops_field and payload_field):
+            continue
+        lte_nas_type = translations_cfg.get(payload_field, "LTE NAS")
+        if fields.get(payload_field) != lte_nas_type:
+            continue
+        if fields.get(nas_msg_field) != attach_accept_value:
+            continue
+        vops_raw = fields.get(vops_field)
+        if vops_raw is None:
+            continue
+        ts = fields.get(ts_field)
+        frame = int(fields.get(frame_field))
+        payload = fields.get(payload_field)
+        subtype = fields.get(sub_type_field)
+        mcc = fields.get(mcc_field)
+        mnc = fields.get(mnc_field)
+        tac = fields.get(tac_field)
+        message = fields.get(nas_msg_field)
+        # Enrich ARFCN/PCI from nearest preceding RRCConnectionSetup
+        arfcn = ""
+        pci = None
+        if rrc_message_field and rrc_setup_value:
+            if version == "3":
+                rrc_sub_f = misc_fields.get("SubTypeV3")
+                rrc_sub_verify = (rrc_sub_f + "_LTERRC") if rrc_sub_f else None
+                rrc_arfcn_f = misc_fields.get("ARFCNV3")
+                rrc_pci_f = misc_fields.get("PCIV3")
+            else:
+                rrc_sub_f = misc_fields.get("SubType2")
+                rrc_sub_verify = rrc_sub_f
+                rrc_arfcn_f = misc_fields.get("ARFCN")
+                rrc_pci_f = None
+            dl_ccch_val = None
+            if rrc_sub_verify:
+                try:
+                    dl_ccch_val = translations_cfg.get(rrc_sub_verify, "RRC DL-CCCH")
+                except Exception:
+                    pass
+            if dl_ccch_val:
+                best_ref = None
+                for ref in sorted_packets:
+                    ref_frame = int(ref["fields"].get(frame_field, 0))
+                    if ref_frame >= frame:
+                        break
+                    ref_msg = ref["fields"].get(rrc_message_field) or ""
+                    if rrc_setup_value in ref_msg and ref["fields"].get(rrc_sub_f) == dl_ccch_val:
+                        best_ref = ref
+                if best_ref:
+                    arfcn = best_ref["fields"].get(rrc_arfcn_f, "") if rrc_arfcn_f else ""
+                    pci = best_ref["fields"].get(rrc_pci_f) if rrc_pci_f else None
+        results[frame].append({
+            "Timestamp": ts,
+            "Frame": frame,
+            "Version": version,
+            "Payload": payload,
+            "PayloadField": payload_field,
+            "SubType": subtype,
+            "SubTypeField": sub_type_field,
+            "MCC": mcc,
+            "MNC": mnc,
+            "TAC": tac,
+            "PCI": pci,
+            "MessageField": nas_msg_field,
+            "Message": message,
+            "ARFCN": arfcn,
+            "VoPS": vops_raw,
+        })
+    return results
+
+
+def extract_5g_nas_vops(
+    packets: List[Dict[str, Any]],
+    nrnas_fields: Dict[str, str],
+    misc_fields: Dict[str, str],
+    translations_cfg: configparser.ConfigParser,
+) -> DefaultDict[str, List[Dict[str, str]]]:
+    """
+    Extract 5G VoPS 3GPP support from NR NAS Registration Accept messages.
+
+    Reads the nas-5gs.nw_feat_sup.vops_3gpp field.
+
+    Args:
+        packets: List of packet dicts.
+        nrnas_fields: 5G NAS field mapping.
+        misc_fields: Miscellaneous field mapping.
+        translations_cfg: Translations for field values.
+
+    Returns:
+        DefaultDict keyed by frame number; each value is a list of extracted records.
+    """
+    results = defaultdict(list)
+    ts_field = misc_fields.get("Timestamp")
+    frame_field = misc_fields.get("Frame")
+    mcc_field = nrnas_fields.get("MCC_5G_TAI")
+    mnc_field = nrnas_fields.get("MNC_5G_TAI")
+    tac_field = nrnas_fields.get("TAC_5G_TAI")
+    nas_msg_field = nrnas_fields.get("NASMsgType")
+    vops_field = nrnas_fields.get("VOPS_3GPP")
+    reg_accept_value = translations_cfg.get(nas_msg_field, "Registration accept") if nas_msg_field else None
+    gsmtap_version_field_v3 = misc_fields.get("VersionV3")
+    nas_sub_type_field = misc_fields.get("SubTypeV3")
+    gsmtap_payload_field = misc_fields.get("PayloadV3")
+    gsmtap_arfcn_field = misc_fields.get("ARFCNV3")
+    gsmtap_pci_field = misc_fields.get("PCIV3")
+    for pkt in packets:
+        fields = pkt["fields"]
+        if not (nas_msg_field and reg_accept_value and vops_field and gsmtap_payload_field):
+            continue
+        nr_nas_type = translations_cfg.get(gsmtap_payload_field, "NR NAS")
+        if fields.get(gsmtap_payload_field) != nr_nas_type:
+            continue
+        if fields.get(nas_msg_field) != reg_accept_value:
+            continue
+        vops_raw = fields.get(vops_field)
+        if vops_raw is None:
+            continue
+        ts = fields.get(ts_field)
+        frame = int(fields.get(frame_field))
+        version = fields.get(gsmtap_version_field_v3)
+        payload = fields.get(gsmtap_payload_field)
+        subtype = fields.get(nas_sub_type_field)
+        mcc = fields.get(mcc_field)
+        mnc = fields.get(mnc_field)
+        tac = fields.get(tac_field)
+        pci = fields.get(gsmtap_pci_field)
+        message = fields.get(nas_msg_field)
+        arfcn = fields.get(gsmtap_arfcn_field)
+        results[frame].append({
+            "Timestamp": ts,
+            "Frame": frame,
+            "Version": version,
+            "Payload": payload,
+            "PayloadField": gsmtap_payload_field,
+            "SubType": subtype,
+            "SubTypeField": nas_sub_type_field,
+            "MCC": mcc,
+            "MNC": mnc,
+            "TAC": tac,
+            "PCI": pci,
+            "MessageField": nas_msg_field,
+            "Message": message,
+            "ARFCN": arfcn,
+            "VoPS": vops_raw,
+        })
+    return results
+
+# SIP (IMS / VoLTE / VoNR)
+
+def extract_sip_packets(
+    packets: List[Dict[str, Any]],
+    sip_fields: Dict[str, str],
+    misc_fields: Dict[str, str],
+) -> DefaultDict[str, List[Dict[str, str]]]:
+    """
+    Extract SIP request and response messages from captured packets.
+
+    Collects every packet that carries a SIP Method or Status-Code field,
+    including the Security Negotiate parameters (sec_mechanism / ealg) needed
+    to assess IPSec usage on VoLTE/VoNR calls.
+
+    Args:
+        packets: List of packet dicts produced by parse_tshark_lines.
+        sip_fields: SIP field mapping from fields.cfg [SIPFields].
+        misc_fields: Miscellaneous field mapping (Timestamp, Frame).
+
+    Returns:
+        DefaultDict keyed by frame number string; each value is a list of
+        extracted SIP record dicts with keys:
+            Timestamp, Frame, Method, StatusCode, StatusCodeField,
+            Realm, SecMechanism, SecMechanismField, EAlg, EAlgField.
+    """
+    results: DefaultDict[str, List[Dict[str, str]]] = defaultdict(list)
+    ts_field       = misc_fields.get("Timestamp")
+    frame_field    = misc_fields.get("Frame")
+    method_field   = sip_fields.get("SIPMethod")
+    status_field   = sip_fields.get("SIPStatusCode")
+    realm_field    = sip_fields.get("SIPRealm")
+    sec_mech_field = sip_fields.get("SIPSecMechanism")
+    ealg_field     = sip_fields.get("SIPEAlg")
+
+    for pkt in packets:
+        fields = pkt["fields"]
+        method = (fields.get(method_field) or "") if method_field else ""
+        status = (fields.get(status_field) or "") if status_field else ""
+
+        if not method and not status:
+            continue
+
+        ts       = fields.get(ts_field, "")      if ts_field       else ""
+        frame    = fields.get(frame_field, "")   if frame_field    else ""
+        realm    = (fields.get(realm_field) or "")    if realm_field    else ""
+        sec_mech = (fields.get(sec_mech_field) or "") if sec_mech_field else ""
+        ealg     = (fields.get(ealg_field) or "")     if ealg_field     else ""
+
+        results[str(frame)].append({
+            "Timestamp":         ts,
+            "Frame":             frame,
+            "Method":            method,
+            "StatusCode":        status,
+            "StatusCodeField":   status_field   or "",
+            "Realm":             realm,
+            "SecMechanism":      sec_mech,
+            "SecMechanismField": sec_mech_field or "",
+            "EAlg":              ealg,
+            "EAlgField":         ealg_field     or "",
+        })
+    return results
+
+
+# Capabilities Message Security
+
+def extract_4g_ue_cap_security_msgs(
+    packets: List[Dict[str, Any]],
+    lterrc_fields: Dict[str, str],
+    misc_fields: Dict[str, str],
+    translations_cfg: configparser.ConfigParser,
+) -> List[Dict[str, Any]]:
+    """
+    Extract 4G (LTE) UECapabilityInformation and SecurityModeComplete RRC messages.
+
+    Collects raw message records without any temporal analysis. The Before/After
+    evaluation is performed separately by the security evaluator.
+
+    Args:
+        packets: List of packet dicts.
+        lterrc_fields: LTE RRC field mapping.
+        misc_fields: Miscellaneous field mapping.
+        translations_cfg: Translations for field values.
+
+    Returns:
+        List of records with Frame, Timestamp, Generation, ARFCN, PCI, MsgType.
+        MsgType is "UECapabilityInformation" or "SecurityModeComplete".
+    """
+    results: List[Dict[str, Any]] = []
+
+    frame_field          = misc_fields.get("Frame")
+    ts_field             = misc_fields.get("Timestamp")
+    gsmtap_version_field = misc_fields.get("Version")
+    gsmtap_version_field_v3 = misc_fields.get("VersionV3")
+    rrc_msg_field        = lterrc_fields.get("C1Message")  # lte-rrc.c1
+
+    uldcch_key = (rrc_msg_field + "_UL-DCCH") if rrc_msg_field else None
+    if not uldcch_key or not translations_cfg.has_section(uldcch_key):
+        return results
+    ue_cap_val = translations_cfg.get(uldcch_key, "ueCapabilityInformation")
+    smc_val    = translations_cfg.get(uldcch_key, "securityModeComplete")
+
+    for pkt in packets:
+        fields    = pkt["fields"]
+        frame_raw = fields.get(frame_field)
+        if frame_raw is None:
+            continue
+        version = fields.get(gsmtap_version_field) or fields.get(gsmtap_version_field_v3)
+        if version not in ("2", "3"):
+            continue
+
+        if version == "3":
+            sub_f      = misc_fields.get("SubTypeV3")
+            payload_f  = misc_fields.get("PayloadV3")
+            arfcn_f    = misc_fields.get("ARFCNV3")
+            pci_f      = misc_fields.get("PCIV3")
+            sub_verify = (sub_f + "_LTERRC") if sub_f else None
+        else:
+            sub_f      = misc_fields.get("SubType2")
+            payload_f  = misc_fields.get("Payload")
+            arfcn_f    = misc_fields.get("ARFCN")
+            pci_f      = misc_fields.get("PCIV3")
+            sub_verify = sub_f
+
+        if not payload_f:
+            continue
+
+        # Collect standard fields before message type check
+        ts      = fields.get(ts_field)
+        payload = fields.get(payload_f)
+        sub     = fields.get(sub_f) if sub_f else None
+        arfcn   = fields.get(arfcn_f) if arfcn_f else None
+        pci     = fields.get(pci_f)   if pci_f   else None
+
+        lte_rrc_type = translations_cfg.get(payload_f, "LTE RRC")
+        if payload != lte_rrc_type:
+            continue
+        uldcch_sub = translations_cfg.get(sub_verify, "RRC UL-DCCH") if sub_verify else None
+        if not uldcch_sub or sub != uldcch_sub:
+            continue
+
+        msg_raw = fields.get(rrc_msg_field)
+        msg_val = msg_raw.split(',')[0] if msg_raw and ',' in msg_raw else msg_raw
+        if msg_val not in (ue_cap_val, smc_val):
+            continue
+        results.append({
+            "Timestamp":    ts,
+            "Frame":        frame_raw,
+            "Version":      version,
+            "PayloadField": payload_f,
+            "Payload":      payload,
+            "SubTypeField": sub_f,
+            "SubType":      sub,
+            "MessageField": uldcch_key,
+            "Message":      msg_val,
+            "ARFCN":        arfcn,
+            "PCI":          pci,
+        })
+    return results
+
+
+def extract_5g_ue_cap_security_msgs(
+    packets: List[Dict[str, Any]],
+    nrrrc_fields: Dict[str, str],
+    misc_fields: Dict[str, str],
+    translations_cfg: configparser.ConfigParser,
+) -> List[Dict[str, Any]]:
+    """
+    Extract 5G (NR) UECapabilityInformation and SecurityModeComplete RRC messages.
+
+    Collects raw message records without any temporal analysis. The Before/After
+    evaluation is performed separately by the security evaluator.
+
+    Args:
+        packets: List of packet dicts.
+        nrrrc_fields: NR RRC field mapping.
+        misc_fields: Miscellaneous field mapping.
+        translations_cfg: Translations for field values.
+
+    Returns:
+        List of records with Frame, Timestamp, Generation, ARFCN, PCI, MsgType.
+        MsgType is "UECapabilityInformation" or "SecurityModeComplete".
+    """
+    results: List[Dict[str, Any]] = []
+
+    frame_field          = misc_fields.get("Frame")
+    ts_field             = misc_fields.get("Timestamp")
+    gsmtap_version_field_v3 = misc_fields.get("VersionV3")
+    nr_rrc_msg_field     = nrrrc_fields.get("C1Message")   # nr-rrc.c1
+    sub_f                = misc_fields.get("SubTypeV3")
+    payload_f            = misc_fields.get("PayloadV3")
+    arfcn_f              = misc_fields.get("ARFCNV3")
+    pci_f                = misc_fields.get("PCIV3")
+    sub_verify           = (sub_f + "_NRRRC") if sub_f else None
+
+    uldcch_key = (nr_rrc_msg_field + "_UL-DCCH") if nr_rrc_msg_field else None
+    if not uldcch_key or not translations_cfg.has_section(uldcch_key):
+        return results
+    ue_cap_val = translations_cfg.get(uldcch_key, "ueCapabilityInformation")
+    smc_val    = translations_cfg.get(uldcch_key, "securityModeComplete")
+
+    for pkt in packets:
+        fields    = pkt["fields"]
+        frame_raw = fields.get(frame_field)
+        if frame_raw is None:
+            continue
+        version = fields.get(gsmtap_version_field_v3)
+        if version != "3" or not payload_f:
+            continue
+
+        # Collect standard fields before message type check
+        ts      = fields.get(ts_field)
+        payload = fields.get(payload_f)
+        sub     = fields.get(sub_f) if sub_f else None
+        arfcn   = fields.get(arfcn_f) if arfcn_f else None
+        pci     = fields.get(pci_f)   if pci_f   else None
+
+        nr_rrc_type = translations_cfg.get(payload_f, "NR RRC")
+        if payload != nr_rrc_type:
+            continue
+        uldcch_sub = translations_cfg.get(sub_verify, "NR RRC UL DCCH") if sub_verify else None
+        if not uldcch_sub or sub != uldcch_sub:
+            continue
+
+        msg_raw = fields.get(nr_rrc_msg_field)
+        msg_val = msg_raw.split(',')[0] if msg_raw and ',' in msg_raw else msg_raw
+        if msg_val not in (ue_cap_val, smc_val):
+            continue
+        results.append({
+            "Timestamp":    ts,
+            "Frame":        frame_raw,
+            "Version":      version,
+            "PayloadField": payload_f,
+            "Payload":      payload,
+            "SubTypeField": sub_f,
+            "SubType":      sub,
+            "MessageField": uldcch_key,
+            "Message":      msg_val,
+            "ARFCN":        arfcn,
+            "PCI":          pci,
+        })
+    return results

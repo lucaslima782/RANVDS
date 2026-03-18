@@ -5,34 +5,47 @@ All notable changes to RANVDS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-03-06
 
 ### Added
-- Initial open source release preparation
-- Comprehensive documentation (README, CONTRIBUTING, API)
-- requirements.txt for Python dependencies
-- .gitignore for repository hygiene
-- CHANGELOG.md for version tracking
-- SECURITY.md for vulnerability reporting
-- GitHub issue and PR templates
-- CI/CD pipeline with GitHub Actions
+- **5G SUCI extraction** — `extract_5g_nas_suci` now extracts SUCI-related information from 5G NAS Registration messages, including scheme type and MCC/MNC fallbacks.
+- **4G VoPS extraction** — `extract_4g_nas_vops` parses IMS VoPS support from LTE NAS Attach Accept messages.
+- **5G VoPS extraction** — `extract_5g_nas_vops` parses VoPS 3GPP support from NR NAS Registration Accept messages.
+- **4G UE Capability security extraction** — `extract_4g_ue_cap_security_msgs` collects 4G UE Capability / Security Mode message ordering data.
+- **5G UE Capability security extraction** — `extract_5g_ue_cap_security_msgs` collects 5G UE Capability / Security Mode message ordering data.
+- **Selection profile support** — new `selection_profile.py` module introduces a `SelectionProfile` dataclass to enable/disable analysis modules across PCAP analysis and security evaluation.
+- **`--profile-json` CLI argument** — PCAP (`-p`) and Security (`-s`) modes now accept a JSON-encoded `SelectionProfile` to control which modules run.
+- **VoPS security evaluation** — security processing now computes VoPS statistics and evaluates per-quintuplet `(Generation, MCC, MNC, TAC, PCI, ARFCN)` status.
+- **SUCI security statistics** — security processing now counts completed 5G registrations and summarizes SUCI ID/scheme usage.
+- **UE Capability security statistics** — security processing now summarizes whether UE Capability messages appeared before or after security activation in 4G and 5G.
+- **VoPS Stats security sheet** — Security ODS output now includes a `VoPS Stats` tab when VoPS data is available.
+- **UE Cap Security Stats security sheet** — Security ODS output now includes a `UE Cap Security Stats` tab when UE capability ordering data is available.
+- **4G UE Cap Security analysis sheet** — Network Analysis ODS can now include a `4G UE Cap Security` tab.
+- **5G UE Cap Security analysis sheet** — Network Analysis ODS can now include a `5G UE Cap Security` tab.
+- **Config mappings for new fields** — `config/fields.cfg` now includes mappings for `IMS_VOPS`, 5G SUCI MCC/MNC, 5G TAI MCC/MNC/TAC, and `VOPS_3GPP`.
+- **LTE UL-DCCH translation mapping** — `config/translations.cfg` now includes `lte-rrc.c1_UL-DCCH`, enabling identification of `ueCapabilityInformation` and related messages.
+- **Repository `.gitignore`** — a root `.gitignore` file was added.
 
 ### Changed
-- N/A
-
-### Deprecated
-- N/A
-
-### Removed
-- N/A
+- **GUI layout redesigned** — `ranvds_gui.py` was reworked into a tabbed interface separating Live Capture, Modem Log, PCAP→ODS, and Security workflows.
+- **GUI log widget changed** — the log area now uses a selectable `TextInput`, allowing copy/paste of logs.
+- **Module selection integrated end-to-end** — both PCAP analysis and Security evaluation now filter outputs according to the selected profile instead of always running all modules.
+- **Conditional ODS generation** — analysis sheets are now only created when the corresponding module is enabled and data exists, avoiding empty tabs for disabled/unused modules.
+- **UE Capability sheet made optional** — the `UE Crypto Capabilities` summary sheet is now controlled by the selection profile.
+- **Security pipeline expanded** — security report generation now accepts and propagates optional SUCI, VoPS, and UE capability security datasets.
+- **MCC/MNC selection logic improved** — `get_best_mcc_mnc_from_results` now derives the best MCC/MNC pair across multiple extraction result sources.
+- **README and CLI help updated** — documentation/help text was updated to describe v2.0.0 functionality, new modules, and new output tabs.
 
 ### Fixed
-- N/A
+- **4G VoPS radio context enrichment** — 4G VoPS extraction now backtracks to the nearest preceding `RRCConnectionSetup` to populate PCI and ARFCN for VoPS records when possible.
+- **Security/analysis consistency for disabled modules** — when a module is disabled through the selection profile, related sheets and summary counters are now suppressed instead of being emitted as empty or irrelevant output.
 
-### Security
-- N/A
+### Removed
+- None.
 
-## [1.0.0] - TBD
+---
+
+## [1.0.0] - 2025
 
 ### Added
 - 2G (GSM/GPRS/EDGE) security analysis
