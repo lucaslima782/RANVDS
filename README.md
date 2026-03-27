@@ -399,6 +399,19 @@ This ensures RANVDS and its derivatives remain free and open-source software.
 If you use RANVDS in your research, please cite:
 
 ```bibtex
+@article{ranvds2026ojcoms,
+  author = {da Rocha, Lucas L. and Carneiro, Vitor G. A. and Pinto, Ernesto L.},
+  journal = {IEEE Open Journal of the Communications Society}, 
+  title = {RANVDS: Client-Side Detection of Insecure RAN Configurations in Operational 2G–5G Networks}, 
+  year = {2026},
+  volume = {7},
+  number = {},
+  pages = {2504-2527},
+  doi = {10.1109/OJCOMS.2026.3673071}
+}
+```
+or
+```bibtex
 @mastersthesis{lima2025ranvds,
   author = {Lucas Lima da Rocha},
   title = {RANVDS: Uma Ferramenta para Detecção de Configurações Inseguras em Redes de Acesso à Telefonia Móvel},
