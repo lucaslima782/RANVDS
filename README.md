@@ -470,6 +470,7 @@ If you use RANVDS in your research, please cite:
 }
 ```
 or
+
 ```bibtex
 @mastersthesis{lima2025thesisranvds,
   author = {Lucas Lima da Rocha},
@@ -477,23 +478,9 @@ or
   school = {Instituto Militar de Engenharia},
   year = {2025},
   type = {Master's Thesis},
-  url = {https://github.com/lucaslima782/RANVDS}
+  url = {https://drive.google.com/file/d/1gXn-EL3JJKgNdwMqNTquD4u_AYv1qpOh/view?usp=sharing}
 }
 ```
-
-```bibtex
-@article{lima2026ojcomsranvds,
-  author={da Rocha, Lucas L. and Carneiro, Vitor G. A. and Pinto, Ernesto L.},
-  journal={IEEE Open Journal of the Communications Society}, 
-  title={RANVDS: Client-Side Detection of Insecure RAN Configurations in Operational 2G–5G Networks}, 
-  year={2026},
-  volume={7},
-  number={},
-  pages={1-24},
-  doi={10.1109/OJCOMS.2026.3673071}
-}
-```
-
 ---
 
 ## 🙏 Acknowledgments
